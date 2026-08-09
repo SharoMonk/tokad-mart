@@ -11,6 +11,8 @@ from .services_inventory import adjust_stock, return_sale
 from .receiving import StockReceivingViewSet
 from .permissions import CanOperatePOS, IsManagerOrOwner
 from .reconciliation import ShiftReconciliationViewSet
+from .scan import ScanViewSet
+from .printer import PrinterViewSet
 
 class ProductSerializer(serializers.ModelSerializer):
     class Meta: model=Product; fields='__all__'
@@ -85,4 +87,8 @@ class InventoryViewSet(viewsets.ViewSet):
         return Response([{'product_id':x.product_id,'product':x.product.name,'quantity':str(x.quantity),'reserved':str(x.reserved_quantity)} for x in qs])
 
 from rest_framework.routers import DefaultRouter
-api=DefaultRouter(); api.register('products',ProductViewSet); api.register('customers',CustomerViewSet); api.register('locations',LocationViewSet); api.register('sales',SaleViewSet); api.register('shifts',ShiftViewSet,basename='shift'); api.register('inventory',InventoryViewSet,basename='inventory'); api.register('receiving',StockReceivingViewSet,basename='receiving'); api.register('reconciliation',ShiftReconciliationViewSet,basename='reconciliation')
+api=DefaultRouter()
+api.register('products',ProductViewSet); api.register('customers',CustomerViewSet); api.register('locations',LocationViewSet)
+api.register('sales',SaleViewSet); api.register('shifts',ShiftViewSet,basename='shift'); api.register('inventory',InventoryViewSet,basename='inventory')
+api.register('receiving',StockReceivingViewSet,basename='receiving'); api.register('reconciliation',ShiftReconciliationViewSet,basename='reconciliation')
+api.register('scan',ScanViewSet,basename='scan'); api.register('printers',PrinterViewSet,basename='printer')
