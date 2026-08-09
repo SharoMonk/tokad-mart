@@ -5,9 +5,12 @@ from rest_framework import serializers, viewsets, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from .models import Product, Customer, InventoryLocation, StockBalance, CashierShift, Sale, SaleReturn, InventoryAdjustment
+from .models import Product, Customer, InventoryLocation, StockBalance, CashierShift, Sale
 from .services import checkout
 from .services_inventory import adjust_stock, return_sale
+from .receiving import StockReceivingViewSet
+from .permissions import CanOperatePOS, IsManagerOrOwner
+from .reconciliation import ShiftReconciliationViewSet
 
 class ProductSerializer(serializers.ModelSerializer):
     class Meta: model=Product; fields='__all__'
@@ -34,7 +37,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
 class LocationViewSet(viewsets.ReadOnlyModelViewSet):
     queryset=InventoryLocation.objects.filter(active=True); serializer_class=LocationSerializer
 class SaleViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset=Sale.objects.select_related('customer','cashier','location','shift').prefetch_related('items__product','payments'); serializer_class=SaleSerializer
+    queryset=Sale.objects.select_related('customer','cashier','location','shift').prefetch_related('items__product','payments'); serializer_class=SaleSerializer; permission_classes=[CanOperatePOS]
     @action(detail=False,methods=['post'],url_path='checkout')
     def checkout_action(self,request):
         data=request.data; key=request.headers.get('Idempotency-Key') or data.get('idempotency_key','')
@@ -51,7 +54,7 @@ class SaleViewSet(viewsets.ReadOnlyModelViewSet):
         document=return_sale(user=request.user,sale_id=pk,items=request.data.get('items',[]),reason=request.data.get('reason',''))
         return Response({'number':document.number,'sale_id':document.sale_id,'total':str(document.total)},status=201)
 class ShiftViewSet(viewsets.ModelViewSet):
-    serializer_class=ShiftSerializer; permission_classes=[IsAuthenticated]; http_method_names=['get','post','head','options']
+    serializer_class=ShiftSerializer; permission_classes=[CanOperatePOS]; http_method_names=['get','post','head','options']
     def get_queryset(self): return CashierShift.objects.filter(user=self.request.user).select_related('location')
     @transaction.atomic
     def create(self,request,*args,**kwargs):
@@ -72,7 +75,7 @@ class ShiftViewSet(viewsets.ModelViewSet):
         return Response(ShiftSerializer(shift).data)
 class InventoryViewSet(viewsets.ViewSet):
     permission_classes=[IsAuthenticated]
-    @action(detail=False,methods=['post'],url_path='adjust')
+    @action(detail=False,methods=['post'],url_path='adjust',permission_classes=[IsManagerOrOwner])
     def adjust(self,request):
         adjustment=adjust_stock(user=request.user,product_id=request.data.get('product_id'),location_id=request.data.get('location_id'),quantity_delta=request.data.get('quantity_delta'),reason=request.data.get('reason',''))
         return Response({'number':adjustment.number,'quantity_delta':str(adjustment.quantity_delta)},status=201)
@@ -82,4 +85,4 @@ class InventoryViewSet(viewsets.ViewSet):
         return Response([{'product_id':x.product_id,'product':x.product.name,'quantity':str(x.quantity),'reserved':str(x.reserved_quantity)} for x in qs])
 
 from rest_framework.routers import DefaultRouter
-api=DefaultRouter(); api.register('products',ProductViewSet); api.register('customers',CustomerViewSet); api.register('locations',LocationViewSet); api.register('sales',SaleViewSet); api.register('shifts',ShiftViewSet,basename='shift'); api.register('inventory',InventoryViewSet,basename='inventory')
+api=DefaultRouter(); api.register('products',ProductViewSet); api.register('customers',CustomerViewSet); api.register('locations',LocationViewSet); api.register('sales',SaleViewSet); api.register('shifts',ShiftViewSet,basename='shift'); api.register('inventory',InventoryViewSet,basename='inventory'); api.register('receiving',StockReceivingViewSet,basename='receiving'); api.register('reconciliation',ShiftReconciliationViewSet,basename='reconciliation')
