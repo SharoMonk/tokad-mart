@@ -19,6 +19,13 @@ run_step() {
   fi
 }
 
+# Harness/repository integrity is deterministic and should always run.
+if [[ -x scripts/agent/check-docs.sh ]]; then
+  run_step "Agent documentation integrity" scripts/agent/check-docs.sh
+else
+  run_step "Agent documentation integrity" bash scripts/agent/check-docs.sh
+fi
+
 # The repository is currently being scaffolded. These checks intentionally
 # discover available tooling instead of assuming a single package manager.
 
@@ -26,6 +33,8 @@ if [[ -f services/api/manage.py ]]; then
   if command -v python >/dev/null 2>&1; then
     run_step "Django checks" python services/api/manage.py check
     run_step "Django migrations check" python services/api/manage.py makemigrations --check --dry-run
+  else
+    echo "SKIP: python is not installed"
   fi
 fi
 
@@ -56,4 +65,4 @@ if [[ "$status" -ne 0 ]]; then
 fi
 
 echo
- echo "VERIFICATION PASSED"
+echo "VERIFICATION PASSED"
