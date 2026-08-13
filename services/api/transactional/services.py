@@ -4,7 +4,15 @@ from uuid import UUID, uuid4
 from django.db import transaction
 from django.utils import timezone
 
-from .models import AuditEvent, IdempotencyRecord, InventoryItem, InventoryMovement, Product, Sale, SaleLine
+from .models import (
+    AuditEvent,
+    IdempotencyRecord,
+    InventoryItem,
+    InventoryMovement,
+    Product,
+    Sale,
+    SaleLine,
+)
 
 
 class CheckoutError(Exception):
@@ -26,6 +34,7 @@ class CheckoutResult:
 
 def _fingerprint(lines: list[CheckoutLine], location_code: str, currency: str) -> str:
     import hashlib
+
     canonical = "|".join(f"{line.product_id}:{line.quantity}" for line in lines)
     raw = f"{location_code}|{currency}|{canonical}".encode()
     return hashlib.sha256(raw).hexdigest()
@@ -41,7 +50,13 @@ def _result_from_record(record: IdempotencyRecord) -> CheckoutResult:
 
 
 @transaction.atomic
-def checkout_sale(*, lines: list[CheckoutLine], location_code: str, currency: str, idempotency_key: str) -> CheckoutResult:
+def checkout_sale(
+    *,
+    lines: list[CheckoutLine],
+    location_code: str,
+    currency: str,
+    idempotency_key: str,
+) -> CheckoutResult:
     if not lines:
         raise CheckoutError("checkout requires at least one line")
     if any(line.quantity <= 0 for line in lines):
@@ -55,14 +70,21 @@ def checkout_sale(*, lines: list[CheckoutLine], location_code: str, currency: st
         return _result_from_record(existing)
 
     product_ids = sorted({line.product_id for line in lines})
-    products = {p.id: p for p in Product.objects.filter(id__in=product_ids, is_active=True)}
+    products = {
+        p.id: p for p in Product.objects.filter(id__in=product_ids, is_active=True)
+    }
     if len(products) != len(product_ids):
         raise CheckoutError("one or more products are unavailable")
 
     inventory = {
         item.product_id: item
-        for item in InventoryItem.objects.select_for_update().filter(
-            product_id__in=product_ids, location_code=location_code
+        for item in (
+            InventoryItem.objects.select_for_update()
+            .filter(
+                product_id__in=product_ids,
+                location_code=location_code,
+            )
+            .order_by("product_id")
         )
     }
     if len(inventory) != len(product_ids):
@@ -121,6 +143,10 @@ def checkout_sale(*, lines: list[CheckoutLine], location_code: str, currency: st
     IdempotencyRecord.objects.create(
         key=idempotency_key,
         request_fingerprint=fingerprint,
-        response_payload={"sale_id": result.sale_id, "reference": str(result.reference), "total_minor": result.total_minor},
+        response_payload={
+            "sale_id": result.sale_id,
+            "reference": str(result.reference),
+            "total_minor": result.total_minor,
+        },
     )
     return result
