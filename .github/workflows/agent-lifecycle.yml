@@ -1,0 +1,40 @@
+name: Agent Lifecycle Checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - chore/agent-harness-foundation
+
+jobs:
+  shell-syntax:
+    name: Agent scripts syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate agent shell scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in scripts/agent/*.sh .githooks/*; do
+            [[ -f "$file" ]] || continue
+            echo "Checking $file"
+            bash -n "$file"
+          done
+
+  lifecycle-doc:
+    name: Agent lifecycle documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check required lifecycle artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f AGENTS.md
+          test -f .agent/workflows/agent-lifecycle.md
+          test -f scripts/agent/worktree.sh
+          test -f scripts/agent/install-hooks.sh
+          test -f .githooks/pre-commit
+          test -f docs/architecture/agent-runtime.md
