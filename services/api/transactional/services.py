@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from decimal import Decimal
 from uuid import UUID, uuid4
 
 from django.db import transaction
@@ -32,6 +31,15 @@ def _fingerprint(lines: list[CheckoutLine], location_code: str, currency: str) -
     return hashlib.sha256(raw).hexdigest()
 
 
+def _result_from_record(record: IdempotencyRecord) -> CheckoutResult:
+    payload = record.response_payload
+    return CheckoutResult(
+        sale_id=int(payload["sale_id"]),
+        reference=UUID(str(payload["reference"])),
+        total_minor=int(payload["total_minor"]),
+    )
+
+
 @transaction.atomic
 def checkout_sale(*, lines: list[CheckoutLine], location_code: str, currency: str, idempotency_key: str) -> CheckoutResult:
     if not lines:
@@ -44,7 +52,7 @@ def checkout_sale(*, lines: list[CheckoutLine], location_code: str, currency: st
     if existing:
         if existing.request_fingerprint != fingerprint:
             raise CheckoutError("idempotency key was reused with a different request")
-        return CheckoutResult(**existing.response_payload)
+        return _result_from_record(existing)
 
     product_ids = sorted({line.product_id for line in lines})
     products = {p.id: p for p in Product.objects.filter(id__in=product_ids, is_active=True)}
