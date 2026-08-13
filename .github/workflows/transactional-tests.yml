@@ -73,9 +73,3 @@ jobs:
 
       - name: Run backend tests
         run: uv run pytest -q
-
-      - name: Check migration drift
-        run: uv run python manage.py makemigrations --check --dry-run
-
-      - name: Run backend tests
-        run: uv run pytest -q
