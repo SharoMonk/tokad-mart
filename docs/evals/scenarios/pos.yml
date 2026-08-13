@@ -1,0 +1,43 @@
+version: 1
+suite: pos-transactional
+scenarios:
+  - id: POS-001
+    name: create-sale
+    status: pending-implementation
+    objective: A valid checkout creates exactly one completed sale.
+    invariants: [SALE-001, SALE-003]
+  - id: POS-002
+    name: retry-checkout
+    status: pending-implementation
+    objective: Retrying the same checkout does not create a duplicate sale.
+    invariants: [SALE-002, PAY-002]
+  - id: POS-003
+    name: duplicate-payment-callback
+    status: pending-implementation
+    objective: Replaying the same payment callback does not duplicate payment effects.
+    invariants: [PAY-002]
+  - id: POS-004
+    name: failed-payment-rollback
+    status: pending-implementation
+    objective: A failed payment does not leave a partially committed sale or inventory mutation.
+    invariants: [SALE-004, INV-001]
+  - id: POS-005
+    name: inventory-reconciliation
+    status: pending-implementation
+    objective: A completed sale produces the expected inventory movement and audit record.
+    invariants: [INV-002, INV-003]
+  - id: POS-006
+    name: concurrent-checkout
+    status: pending-implementation
+    objective: Concurrent attempts cannot violate stock or duplicate a transaction.
+    invariants: [INV-001, SALE-002]
+  - id: POS-007
+    name: receipt-reconciliation
+    status: pending-implementation
+    objective: Receipt totals exactly reconcile with the persisted sale.
+    invariants: [SALE-003]
+  - id: POS-008
+    name: completed-sale-immutability
+    status: pending-implementation
+    objective: A completed sale cannot be silently changed through the normal API.
+    invariants: [SALE-001]

@@ -1,0 +1,20 @@
+name: Agent application evaluations
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  evaluation-registry:
+    name: Validate evaluation registry
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate evaluation registry
+        run: bash scripts/agent/run-evals.sh
+      - name: Upload evaluation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: tokad-evaluation-report
+          path: .agent/reports/evals-latest.md
