@@ -20,15 +20,11 @@ run_step() {
 }
 
 # Harness/repository integrity is deterministic and should always run.
-if [[ -x scripts/agent/check-docs.sh ]]; then
-  run_step "Agent documentation integrity" scripts/agent/check-docs.sh
-else
-  run_step "Agent documentation integrity" bash scripts/agent/check-docs.sh
-fi
+run_step "Agent documentation integrity" bash scripts/agent/check-docs.sh
+run_step "Architecture invariants" bash scripts/agent/check-invariants.sh
 
 # The repository is currently being scaffolded. These checks intentionally
 # discover available tooling instead of assuming a single package manager.
-
 if [[ -f services/api/manage.py ]]; then
   if command -v python >/dev/null 2>&1; then
     run_step "Django checks" python services/api/manage.py check
