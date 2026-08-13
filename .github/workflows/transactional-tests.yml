@@ -1,0 +1,72 @@
+name: Transactional Backend Tests
+
+on:
+  pull_request:
+    paths:
+      - "services/api/**"
+      - "scripts/agent/test-backend.sh"
+      - ".github/workflows/transactional-tests.yml"
+  push:
+    branches: [main, chore/agent-harness-foundation]
+    paths:
+      - "services/api/**"
+      - "scripts/agent/test-backend.sh"
+      - ".github/workflows/transactional-tests.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: tokad_mart
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d tokad_mart"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+
+    defaults:
+      run:
+        working-directory: services/api
+
+    env:
+      DJANGO_DEBUG: "1"
+      DJANGO_SECRET_KEY: ci-only-secret
+      POSTGRES_DB: tokad_mart
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: 5432
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: latest
+          enable-cache: true
+
+      - name: Install backend dependencies
+        run: uv sync --extra dev
+
+      - name: Check Django configuration
+        run: uv run python manage.py check
+
+      - name: Check migration drift
+        run: uv run python manage.py makemigrations --check --dry-run
+
+      - name: Run transactional tests
+        run: uv run pytest
