@@ -1,6 +1,5 @@
 from django.db import migrations, models
 import django.db.models.deletion
-import uuid
 
 
 class Migration(migrations.Migration):
@@ -68,7 +67,7 @@ class Migration(migrations.Migration):
             name="Sale",
             fields=[
                 ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
-                ("reference", models.UUIDField(unique=True, default=uuid.uuid4)),
+                ("reference", models.UUIDField(unique=True)),
                 ("location_code", models.CharField(max_length=64)),
                 ("currency", models.CharField(max_length=3)),
                 ("subtotal_minor", models.PositiveBigIntegerField(default=0)),
