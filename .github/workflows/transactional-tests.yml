@@ -1,11 +1,14 @@
 name: Transactional Backend Tests
 
 on:
+  workflow_dispatch:
+
   pull_request:
     paths:
       - "services/api/**"
       - "scripts/agent/test-backend.sh"
       - ".github/workflows/transactional-tests.yml"
+
   push:
     branches: [main, chore/agent-harness-foundation]
     paths:
@@ -16,6 +19,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+
     services:
       postgres:
         image: postgres:16
@@ -68,5 +72,5 @@ jobs:
       - name: Check migration drift
         run: uv run python manage.py makemigrations --check --dry-run
 
-      - name: Run transactional tests
-        run: uv run pytest
+      - name: Run backend tests
+        run: uv run pytest -q
