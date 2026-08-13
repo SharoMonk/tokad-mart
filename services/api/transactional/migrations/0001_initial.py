@@ -57,11 +57,7 @@ class Migration(migrations.Migration):
                 ("quantity", models.BigIntegerField(default=0)),
                 ("product", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="inventory_items", to="transactional.product")),
             ],
-            options={
-                "constraints": [
-                    models.UniqueConstraint(fields=("product", "location_code"), name="uniq_inventory_product_location"),
-                ],
-            },
+            options={"constraints": [models.UniqueConstraint(fields=("product", "location_code"), name="uniq_inventory_product_location")]},
         ),
         migrations.CreateModel(
             name="Sale",
@@ -72,7 +68,7 @@ class Migration(migrations.Migration):
                 ("currency", models.CharField(max_length=3)),
                 ("subtotal_minor", models.PositiveBigIntegerField(default=0)),
                 ("total_minor", models.PositiveBigIntegerField(default=0)),
-                ("status", models.CharField(choices=[("DRAFT", "DRAFT"), ("PENDING_PAYMENT", "PENDING_PAYMENT"), ("COMPLETED", "COMPLETED"), ("PAYMENT_FAILED", "PAYMENT_FAILED"), ("CANCELLED", "CANCELLED")], default="DRAFT", max_length=32)),
+                ("status", models.CharField(choices=[("DRAFT", "Draft"), ("PENDING_PAYMENT", "Pending payment"), ("COMPLETED", "Completed"), ("PAYMENT_FAILED", "Payment failed"), ("CANCELLED", "Cancelled")], default="DRAFT", max_length=32)),
                 ("created_at", models.DateTimeField(auto_now_add=True)),
                 ("completed_at", models.DateTimeField(blank=True, null=True)),
                 ("customer", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, to="transactional.customer")),
@@ -99,7 +95,7 @@ class Migration(migrations.Migration):
                 ("provider_reference", models.CharField(max_length=255, unique=True)),
                 ("amount_minor", models.PositiveBigIntegerField()),
                 ("currency", models.CharField(max_length=3)),
-                ("status", models.CharField(choices=[("PENDING", "PENDING"), ("SUCCEEDED", "SUCCEEDED"), ("FAILED", "FAILED"), ("CANCELLED", "CANCELLED"), ("REFUNDED", "REFUNDED")], default="PENDING", max_length=32)),
+                ("status", models.CharField(choices=[("PENDING", "Pending"), ("SUCCEEDED", "Succeeded"), ("FAILED", "Failed"), ("CANCELLED", "Cancelled"), ("REFUNDED", "Refunded")], default="PENDING", max_length=32)),
                 ("created_at", models.DateTimeField(auto_now_add=True)),
                 ("sale", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="payments", to="transactional.sale")),
             ],
@@ -109,7 +105,7 @@ class Migration(migrations.Migration):
             fields=[
                 ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
                 ("quantity_delta", models.BigIntegerField()),
-                ("reason", models.CharField(choices=[("SALE", "SALE"), ("RETURN", "RETURN"), ("PURCHASE", "PURCHASE"), ("ADJUSTMENT", "ADJUSTMENT"), ("TRANSFER_IN", "TRANSFER_IN"), ("TRANSFER_OUT", "TRANSFER_OUT"), ("DAMAGE", "DAMAGE")], max_length=32)),
+                ("reason", models.CharField(choices=[("SALE", "Sale"), ("RETURN", "Return"), ("PURCHASE", "Purchase"), ("ADJUSTMENT", "Adjustment"), ("TRANSFER_IN", "Transfer in"), ("TRANSFER_OUT", "Transfer out"), ("DAMAGE", "Damage")], max_length=32)),
                 ("reference", models.CharField(blank=True, max_length=255)),
                 ("created_at", models.DateTimeField(auto_now_add=True)),
                 ("inventory_item", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="movements", to="transactional.inventoryitem")),
