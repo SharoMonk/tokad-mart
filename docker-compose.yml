@@ -1,0 +1,19 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: tokad
+      POSTGRES_USER: tokad
+      POSTGRES_PASSWORD: tokad
+    volumes: [postgres_data:/var/lib/postgresql/data]
+  api:
+    build: ./backend
+    command: sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
+    environment:
+      DATABASE_URL: postgres://tokad:tokad@db:5432/tokad
+      DJANGO_DEBUG: '1'
+    volumes: [./backend:/app]
+    ports: ['8000:8000']
+    depends_on: [db]
+volumes:
+  postgres_data:
