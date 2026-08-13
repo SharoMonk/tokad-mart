@@ -1,7 +1,6 @@
 name: Transactional Backend Tests
-
 on:
-  workflow_dispatch:
+  workflow_dispatch: 
 
   pull_request:
     paths:
@@ -68,6 +67,12 @@ jobs:
 
       - name: Check Django configuration
         run: uv run python manage.py check
+        
+      - name: Check migration drift
+        run: uv run python manage.py makemigrations --check --dry-run
+
+      - name: Run backend tests
+        run: uv run pytest -q
 
       - name: Check migration drift
         run: uv run python manage.py makemigrations --check --dry-run
