@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+
+# Keep the hook deterministic and cheap. Full verification belongs in CI / verify.sh.
+if [[ "${TOKAD_SKIP_AGENT_HOOKS:-0}" == "1" ]]; then
+  exit 0
+fi
+
+"$ROOT/scripts/agent/check-docs.sh"
+"$ROOT/scripts/agent/check-invariants.sh"

@@ -1,0 +1,49 @@
+name: Agent Feedback Loop
+
+on:
+  pull_request:
+    paths:
+      - '.agent/**'
+      - 'docs/**'
+      - 'scripts/agent/**'
+      - 'services/**'
+      - 'apps/**'
+      - '.github/workflows/**'
+  push:
+    branches:
+      - chore/agent-harness-foundation
+
+jobs:
+  feedback:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Validate shell scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r file; do
+            bash -n "$file"
+          done < <(find scripts/agent .githooks -type f -name '*.sh' -print 2>/dev/null)
+
+      - name: Run verification
+        shell: bash
+        run: bash scripts/agent/collect-failures.sh
+
+      - name: Run review signals
+        shell: bash
+        run: bash scripts/agent/review.sh
+
+      - name: Publish agent reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tokad-agent-feedback
+          path: .agent/reports/
+          if-no-files-found: ignore
