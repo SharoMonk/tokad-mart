@@ -55,6 +55,13 @@ class SaleLine(models.Model):
 
 
 class Payment(models.Model):
+    class Method(models.TextChoices):
+        CASH = "CASH"
+        CARD = "CARD"
+        BANK_TRANSFER = "BANK_TRANSFER"
+        MOBILE_MONEY = "MOBILE_MONEY"
+        EXTERNAL = "EXTERNAL"
+
     class Status(models.TextChoices):
         PENDING = "PENDING"
         SUCCEEDED = "SUCCEEDED"
@@ -65,6 +72,8 @@ class Payment(models.Model):
     sale = models.ForeignKey(Sale, on_delete=models.PROTECT, related_name="payments")
     provider = models.CharField(max_length=64)
     provider_reference = models.CharField(max_length=255, unique=True)
+    idempotency_key = models.CharField(max_length=255, unique=True)
+    method = models.CharField(max_length=32, choices=Method.choices)
     amount_minor = models.PositiveBigIntegerField()
     currency = models.CharField(max_length=3)
     status = models.CharField(max_length=32, choices=Status.choices, default=Status.PENDING)
