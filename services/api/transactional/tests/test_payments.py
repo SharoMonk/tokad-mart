@@ -65,6 +65,30 @@ def test_pos_cash_sale_completes_sale_and_payment():
 
 
 @pytest.mark.django_db
+def test_pos_cash_sale_retry_returns_same_result():
+    product = make_product()
+    kwargs = dict(
+        lines=[CheckoutLine(product_id=product.id, quantity=2)],
+        location_code="MAIN",
+        currency="NGN",
+        amount_minor=2000,
+        sale_idempotency_key="pos-sale-retry-001",
+        payment_idempotency_key="pos-payment-retry-001",
+        provider_reference="POS-CASH-RETRY-001",
+    )
+
+    first = process_pos_cash_sale(**kwargs)
+    second = process_pos_cash_sale(**kwargs)
+
+    assert first == second
+    assert Sale.objects.count() == 1
+    assert Payment.objects.count() == 1
+    assert SaleLine.objects.count() == 1
+    assert InventoryMovement.objects.count() == 1
+    assert InventoryItem.objects.get(product=product).quantity == 3
+
+
+@pytest.mark.django_db
 def test_payment_amount_mismatch_rolls_back_pending_sale():
     product = make_product()
 
