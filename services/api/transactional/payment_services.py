@@ -1,11 +1,12 @@
 from dataclasses import dataclass
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from django.db import connection, transaction
 from django.utils import timezone
 
 from .models import (
     AuditEvent,
+    IdempotencyRecord,
     InventoryItem,
     InventoryMovement,
     Payment,
@@ -82,13 +83,10 @@ def create_pending_sale(
         raise CheckoutError("line quantity must be positive")
 
     fingerprint = _fingerprint(lines, location_code, currency)
-    _lock_payment_key(f"sale:{idempotency_key}")
+    sale_key = f"sale:{idempotency_key}"
+    _lock_payment_key(sale_key)
 
-    from .models import IdempotencyRecord
-
-    existing = IdempotencyRecord.objects.filter(
-        key=f"sale:{idempotency_key}",
-    ).first()
+    existing = IdempotencyRecord.objects.filter(key=sale_key).first()
 
     if existing is not None:
         if existing.request_fingerprint != fingerprint:
@@ -142,7 +140,7 @@ def create_pending_sale(
         resolved.append((product, line.quantity, line_total))
 
     sale = Sale.objects.create(
-        reference=__import__("uuid").uuid4(),
+        reference=uuid4(),
         location_code=location_code,
         currency=currency,
         subtotal_minor=total,
@@ -162,7 +160,7 @@ def create_pending_sale(
         )
 
     IdempotencyRecord.objects.create(
-        key=f"sale:{idempotency_key}",
+        key=sale_key,
         request_fingerprint=fingerprint,
         response_payload={
             "sale_id": sale.id,
@@ -195,9 +193,7 @@ def record_successful_payment(
 
     _lock_payment_key(idempotency_key)
 
-    existing = Payment.objects.filter(
-        idempotency_key=idempotency_key,
-    ).first()
+    existing = Payment.objects.filter(idempotency_key=idempotency_key).first()
 
     if existing is not None:
         if (
@@ -289,7 +285,9 @@ def finalize_paid_sale(
         raise PaymentError("successful payment currency does not match sale currency")
 
     lines = list(
-        SaleLine.objects.select_related("product").filter(sale=sale).order_by("product_id", "id")
+        SaleLine.objects.select_related("product")
+        .filter(sale=sale)
+        .order_by("product_id", "id")
     )
 
     if not lines:
@@ -302,10 +300,14 @@ def finalize_paid_sale(
     product_ids = sorted(quantities)
     inventory = {
         item.product_id: item
-        for item in InventoryItem.objects.select_for_update().filter(
-            product_id__in=product_ids,
-            location_code=sale.location_code,
-        ).order_by("product_id")
+        for item in (
+            InventoryItem.objects.select_for_update()
+            .filter(
+                product_id__in=product_ids,
+                location_code=sale.location_code,
+            )
+            .order_by("product_id")
+        )
     }
 
     if len(inventory) != len(product_ids):
@@ -315,9 +317,7 @@ def finalize_paid_sale(
         item = inventory[product_id]
         quantity = quantities[product_id]
         if item.quantity < quantity:
-            raise PaymentError(
-                f"insufficient stock for product {product_id}"
-            )
+            raise PaymentError(f"insufficient stock for product {product_id}")
 
     for product_id in product_ids:
         item = inventory[product_id]
