@@ -4,6 +4,12 @@ from uuid import UUID, uuid4
 from django.db import connection, transaction
 from django.utils import timezone
 
+from .exceptions import (
+    CheckoutError,
+    InsufficientStockError,
+    InventoryMissingError,
+    ProductUnavailableError,
+)
 from .models import (
     AuditEvent,
     IdempotencyRecord,
@@ -13,10 +19,6 @@ from .models import (
     Sale,
     SaleLine,
 )
-
-
-class CheckoutError(Exception):
-    """Raised when a checkout cannot be completed without violating a domain invariant."""
 
 
 @dataclass(frozen=True)
@@ -128,17 +130,7 @@ def checkout_sale(
     currency: str,
     idempotency_key: str,
 ) -> CheckoutResult:
-    """
-    Complete a sale atomically.
-
-    Guarantees:
-
-    - Inventory cannot be oversold under concurrent checkout.
-    - The same idempotency key cannot create multiple sales.
-    - Repeating a completed request returns the original result.
-    - Reusing an idempotency key with different request data fails.
-    """
-
+    """Complete a sale atomically."""
     if not lines:
         raise CheckoutError("checkout requires at least one line")
 
@@ -151,15 +143,7 @@ def checkout_sale(
         currency,
     )
 
-    # ---------------------------------------------------------------
-    # Serialize requests using the same idempotency key
-    # ---------------------------------------------------------------
-
     _lock_idempotency_key(idempotency_key)
-
-    # ---------------------------------------------------------------
-    # Check / claim idempotency key
-    # ---------------------------------------------------------------
 
     existing = _claim_idempotency_key(
         key=idempotency_key,
@@ -168,10 +152,6 @@ def checkout_sale(
 
     if existing is not None:
         return _result_from_record(existing)
-
-    # ---------------------------------------------------------------
-    # Load products
-    # ---------------------------------------------------------------
 
     product_ids = sorted({line.product_id for line in lines})
 
@@ -184,11 +164,7 @@ def checkout_sale(
     }
 
     if len(products) != len(product_ids):
-        raise CheckoutError("one or more products are unavailable")
-
-    # ---------------------------------------------------------------
-    # Lock inventory rows
-    # ---------------------------------------------------------------
+        raise ProductUnavailableError("one or more products are unavailable")
 
     inventory = {
         item.product_id: item
@@ -203,14 +179,9 @@ def checkout_sale(
     }
 
     if len(inventory) != len(product_ids):
-        raise CheckoutError("inventory record is missing")
-
-    # ---------------------------------------------------------------
-    # Validate stock and calculate total
-    # ---------------------------------------------------------------
+        raise InventoryMissingError("inventory record is missing")
 
     total = 0
-
     resolved: list[tuple[Product, int, int]] = []
 
     for line in lines:
@@ -218,7 +189,9 @@ def checkout_sale(
         item = inventory[line.product_id]
 
         if item.quantity < line.quantity:
-            raise CheckoutError(f"insufficient stock for {product.sku}")
+            raise InsufficientStockError(
+                f"insufficient stock for {product.sku}"
+            )
 
         line_total = product.unit_price_minor * line.quantity
 
@@ -232,10 +205,6 @@ def checkout_sale(
             )
         )
 
-    # ---------------------------------------------------------------
-    # Create sale
-    # ---------------------------------------------------------------
-
     sale = Sale.objects.create(
         reference=uuid4(),
         location_code=location_code,
@@ -245,10 +214,6 @@ def checkout_sale(
         status=Sale.Status.COMPLETED,
         completed_at=timezone.now(),
     )
-
-    # ---------------------------------------------------------------
-    # Create sale lines and consume inventory
-    # ---------------------------------------------------------------
 
     for product, quantity, line_total in resolved:
         SaleLine.objects.create(
@@ -264,7 +229,6 @@ def checkout_sale(
         item = inventory[product.id]
 
         item.quantity -= quantity
-
         item.save(update_fields=["quantity"])
 
         InventoryMovement.objects.create(
@@ -273,10 +237,6 @@ def checkout_sale(
             reason=InventoryMovement.Reason.SALE,
             reference=str(sale.reference),
         )
-
-    # ---------------------------------------------------------------
-    # Audit event
-    # ---------------------------------------------------------------
 
     AuditEvent.objects.create(
         actor="system",
@@ -289,19 +249,11 @@ def checkout_sale(
         },
     )
 
-    # ---------------------------------------------------------------
-    # Build result
-    # ---------------------------------------------------------------
-
     result = CheckoutResult(
         sale_id=sale.id,
         reference=sale.reference,
         total_minor=total,
     )
-
-    # ---------------------------------------------------------------
-    # Complete idempotency record
-    # ---------------------------------------------------------------
 
     updated = IdempotencyRecord.objects.filter(
         key=idempotency_key,
