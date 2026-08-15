@@ -2,7 +2,6 @@ from dataclasses import dataclass
 
 from django.db import connection, transaction
 from django.db.models import Sum
-from django.utils import timezone
 
 from .exceptions import (
     InvalidSaleStateError,
@@ -11,8 +10,10 @@ from .exceptions import (
     PaymentIdempotencyConflictError,
     PaymentNotFoundError,
 )
-from .models import AuditEvent, Payment, PaymentRefund
-from .payment_providers import PaymentProvider, PaymentProviderError, VerifiedPayment
+from .models import Payment, PaymentRefund
+from .outbox import enqueue_outbox_event
+from .payment_outbox import REFUND_REQUESTED_EVENT
+from .payment_providers import PaymentProvider, VerifiedPayment
 
 
 @dataclass(frozen=True)
@@ -53,7 +54,7 @@ def request_refund(
     provider: PaymentProvider,
     idempotency_key: str,
 ) -> RefundResult:
-    """Create and execute an idempotent refund against a provider."""
+    """Create an idempotent refund request and durably enqueue provider work."""
     _lock_refund_key(idempotency_key)
 
     existing = PaymentRefund.objects.filter(idempotency_key=idempotency_key).first()
@@ -112,48 +113,15 @@ def request_refund(
         status=PaymentRefund.Status.REQUESTED,
     )
 
-    try:
-        provider.refund_payment(
-            provider_reference=payment.provider_reference,
-            amount_minor=refund_amount,
-        )
-    except PaymentProviderError as exc:
-        refund.status = PaymentRefund.Status.FAILED
-        refund.provider_metadata = {"error": str(exc)}
-        refund.save(update_fields=["status", "provider_metadata"])
-        return RefundResult(
-            refund_id=refund.id,
-            payment_id=refund.payment_id,
-            amount_minor=refund.amount_minor,
-            currency=refund.currency,
-            status=refund.status,
-            provider=refund.provider,
-        )
-
-    refund.status = PaymentRefund.Status.SUCCEEDED
-    refund.provider_metadata = {
-        "processed_at": timezone.now().isoformat(),
-    }
-    refund.save(update_fields=["status", "provider_metadata"])
-
-    total_refunded = already_refunded + refund_amount
-    full_refund = total_refunded == payment.amount_minor
-    if full_refund:
-        payment.status = Payment.Status.REFUNDED
-        payment.save(update_fields=["status"])
-
-    AuditEvent.objects.create(
-        actor="system",
-        action="payment.refunded",
-        entity_type="PaymentRefund",
-        entity_reference=str(refund.id),
-        metadata={
+    enqueue_outbox_event(
+        event_type=REFUND_REQUESTED_EVENT,
+        aggregate_type="PaymentRefund",
+        aggregate_id=refund.id,
+        idempotency_key=f"payment-refund:{idempotency_key}",
+        payload={
+            "refund_id": refund.id,
             "payment_id": payment.id,
-            "provider": payment.provider,
-            "provider_reference": payment.provider_reference,
-            "amount_minor": refund_amount,
-            "currency": payment.currency,
-            "full_refund": full_refund,
+            "provider": provider.name,
         },
     )
 
