@@ -6,11 +6,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-from ..payment_providers import (
-    PaymentIntent,
-    PaymentProviderError,
-    VerifiedPayment,
-)
+from ..payment_providers import PaymentIntent, PaymentProviderError, VerifiedPayment
 
 
 class PaystackProvider:
@@ -24,7 +20,9 @@ class PaystackProvider:
         timeout: float | None = None,
     ) -> None:
         self.secret_key = secret_key or os.getenv("PAYSTACK_SECRET_KEY", "")
-        self.base_url = (base_url or os.getenv("PAYSTACK_BASE_URL", "https://api.paystack.co")).rstrip("/")
+        self.base_url = (
+            base_url or os.getenv("PAYSTACK_BASE_URL", "https://api.paystack.co")
+        ).rstrip("/")
         self.timeout = timeout or float(os.getenv("PAYSTACK_TIMEOUT_SECONDS", "10"))
 
         if not self.secret_key:
@@ -71,7 +69,9 @@ class PaystackProvider:
             raise PaymentProviderError("Paystack API returned invalid JSON") from exc
 
         if not data.get("status"):
-            raise PaymentProviderError(str(data.get("message") or "Paystack API request failed"))
+            raise PaymentProviderError(
+                str(data.get("message") or "Paystack API request failed")
+            )
 
         return data
 
@@ -90,7 +90,7 @@ class PaystackProvider:
             method="POST",
             path="/transaction/initialize",
             payload={
-                "amount": amount_minor,
+                "amount": str(amount_minor),
                 "currency": currency.upper(),
                 "email": customer_email,
                 "reference": reference,
@@ -103,7 +103,9 @@ class PaystackProvider:
         access_code = data.get("access_code")
 
         if not checkout_url or not access_code:
-            raise PaymentProviderError("Paystack initialization response is missing checkout data")
+            raise PaymentProviderError(
+                "Paystack initialization response is missing checkout data"
+            )
 
         return PaymentIntent(
             provider=self.name,
