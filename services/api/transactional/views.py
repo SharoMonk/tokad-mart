@@ -17,6 +17,7 @@ from .exceptions import (
 )
 from .payment_services import process_pos_cash_sale
 from .permissions import IsPOSOperator
+from .pos_access import POSAccessError, authorize_pos_scope
 from .serializers import POSRequestError, parse_pos_cash_sale_request
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,21 @@ def pos_cash_sale(request):
                 "message": str(exc),
             },
             status=400,
+        )
+
+    try:
+        authorize_pos_scope(
+            user=request.user,
+            location_code=data.location_code,
+            terminal_code=data.terminal_code,
+        )
+    except POSAccessError as exc:
+        return JsonResponse(
+            {
+                "error": "pos_access_denied",
+                "message": str(exc),
+            },
+            status=403,
         )
 
     try:
@@ -137,6 +153,7 @@ def pos_cash_sale(request):
             "currency": result.currency,
             "sale_status": result.sale_status,
             "payment_status": result.payment_status,
+            "terminal_code": data.terminal_code,
         },
         status=201,
     )
