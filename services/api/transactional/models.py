@@ -167,6 +167,34 @@ class PaymentWebhookEvent(models.Model):
         ]
 
 
+class OutboxEvent(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "PENDING"
+        PROCESSING = "PROCESSING"
+        COMPLETED = "COMPLETED"
+        FAILED = "FAILED"
+
+    event_type = models.CharField(max_length=128)
+    aggregate_type = models.CharField(max_length=128)
+    aggregate_id = models.CharField(max_length=128)
+    idempotency_key = models.CharField(max_length=255, unique=True)
+    payload = models.JSONField(default=dict)
+    status = models.CharField(max_length=32, choices=Status.choices, default=Status.PENDING)
+    attempts = models.PositiveIntegerField(default=0)
+    available_at = models.DateTimeField()
+    locked_until = models.DateTimeField(null=True, blank=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["status", "available_at"]),
+            models.Index(fields=["aggregate_type", "aggregate_id"]),
+        ]
+
+
 class InventoryMovement(models.Model):
     class Reason(models.TextChoices):
         SALE = "SALE"
