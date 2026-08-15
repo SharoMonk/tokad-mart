@@ -13,6 +13,7 @@ from transactional.models import (
     Sale,
     SaleLine,
 )
+from transactional.exceptions import InsufficientStockError
 from transactional.payment_services import (
     create_pending_sale,
     finalize_paid_sale,
@@ -200,7 +201,7 @@ def test_finalize_paid_sale_rechecks_inventory():
 
     InventoryItem.objects.filter(product=product).update(quantity=0)
 
-    with pytest.raises(PaymentError, match="insufficient stock"):
+    with pytest.raises(InsufficientStockError, match="insufficient stock"):
         finalize_paid_sale(
             sale_id=sale.sale_id,
             payment_id=payment.payment_id,
