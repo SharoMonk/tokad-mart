@@ -132,6 +132,24 @@ class Payment(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 
+class PaymentRefund(models.Model):
+    class Status(models.TextChoices):
+        REQUESTED = "REQUESTED"
+        SUCCEEDED = "SUCCEEDED"
+        FAILED = "FAILED"
+
+    payment = models.ForeignKey(Payment, on_delete=models.PROTECT, related_name="refunds")
+    provider = models.CharField(max_length=64)
+    provider_reference = models.CharField(max_length=255)
+    provider_refund_reference = models.CharField(max_length=255, unique=True, null=True, blank=True)
+    idempotency_key = models.CharField(max_length=255, unique=True)
+    amount_minor = models.PositiveBigIntegerField()
+    currency = models.CharField(max_length=3)
+    status = models.CharField(max_length=32, choices=Status.choices, default=Status.REQUESTED)
+    provider_metadata = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
 class PaymentWebhookEvent(models.Model):
     provider = models.CharField(max_length=64)
     event_id = models.CharField(max_length=255)
