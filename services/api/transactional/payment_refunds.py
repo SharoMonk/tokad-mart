@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from django.db import connection, transaction
+from django.db.models import Sum
 from django.utils import timezone
 
 from .exceptions import (
@@ -44,6 +45,7 @@ def _lock_refund_key(key: str) -> None:
         )
 
 
+@transaction.atomic
 def request_refund(
     *,
     payment_id: int,
@@ -52,99 +54,117 @@ def request_refund(
     idempotency_key: str,
 ) -> RefundResult:
     """Create and execute an idempotent refund against a provider."""
-    with transaction.atomic():
-        _lock_refund_key(idempotency_key)
+    _lock_refund_key(idempotency_key)
 
-        existing = PaymentRefund.objects.filter(idempotency_key=idempotency_key).first()
-        if existing is not None:
-            if existing.payment_id != payment_id or (
-                amount_minor is not None and existing.amount_minor != amount_minor
-            ):
-                raise PaymentIdempotencyConflictError(
-                    "refund idempotency key was reused with a different request"
-                )
-            return RefundResult(
-                refund_id=existing.id,
-                payment_id=existing.payment_id,
-                amount_minor=existing.amount_minor,
-                currency=existing.currency,
-                status=existing.status,
-                provider=existing.provider,
+    existing = PaymentRefund.objects.filter(idempotency_key=idempotency_key).first()
+    if existing is not None:
+        if existing.payment_id != payment_id or (
+            amount_minor is not None and existing.amount_minor != amount_minor
+        ):
+            raise PaymentIdempotencyConflictError(
+                "refund idempotency key was reused with a different request"
             )
+        return RefundResult(
+            refund_id=existing.id,
+            payment_id=existing.payment_id,
+            amount_minor=existing.amount_minor,
+            currency=existing.currency,
+            status=existing.status,
+            provider=existing.provider,
+        )
 
-        try:
-            payment = Payment.objects.select_for_update().get(id=payment_id)
-        except Payment.DoesNotExist as exc:
-            raise PaymentNotFoundError("payment was not found") from exc
+    try:
+        payment = Payment.objects.select_for_update().get(id=payment_id)
+    except Payment.DoesNotExist as exc:
+        raise PaymentNotFoundError("payment was not found") from exc
 
-        if payment.status != Payment.Status.SUCCEEDED:
-            raise InvalidSaleStateError(
-                f"payment cannot be refunded in status {payment.status}"
-            )
+    if payment.status != Payment.Status.SUCCEEDED:
+        raise InvalidSaleStateError(
+            f"payment cannot be refunded in status {payment.status}"
+        )
 
-        refund_amount = payment.amount_minor if amount_minor is None else amount_minor
-        if refund_amount <= 0 or refund_amount > payment.amount_minor:
-            raise PaymentAmountMismatchError(
-                "refund amount must be positive and cannot exceed payment amount"
-            )
+    if provider.name != payment.provider:
+        raise PaymentError("refund provider does not match payment provider")
 
-        if provider.name != payment.provider:
-            raise PaymentError("refund provider does not match payment provider")
-
-        refund = PaymentRefund.objects.create(
+    already_refunded = (
+        PaymentRefund.objects.filter(
             payment=payment,
-            provider=provider.name,
+            status=PaymentRefund.Status.SUCCEEDED,
+        ).aggregate(total=Sum("amount_minor"))["total"]
+        or 0
+    )
+
+    remaining = payment.amount_minor - already_refunded
+    refund_amount = remaining if amount_minor is None else amount_minor
+
+    if refund_amount <= 0 or refund_amount > remaining:
+        raise PaymentAmountMismatchError(
+            "refund amount must be positive and cannot exceed the remaining refundable amount"
+        )
+
+    refund = PaymentRefund.objects.create(
+        payment=payment,
+        provider=provider.name,
+        provider_reference=payment.provider_reference,
+        idempotency_key=idempotency_key,
+        amount_minor=refund_amount,
+        currency=payment.currency,
+        status=PaymentRefund.Status.REQUESTED,
+    )
+
+    try:
+        provider.refund_payment(
             provider_reference=payment.provider_reference,
-            idempotency_key=idempotency_key,
             amount_minor=refund_amount,
-            currency=payment.currency,
-            status=PaymentRefund.Status.REQUESTED,
         )
-
-        try:
-            provider.refund_payment(
-                provider_reference=payment.provider_reference,
-                amount_minor=refund_amount,
-            )
-        except PaymentProviderError as exc:
-            refund.status = PaymentRefund.Status.FAILED
-            refund.provider_metadata = {"error": str(exc)}
-            refund.save(update_fields=["status", "provider_metadata"])
-            raise
-
-        refund.status = PaymentRefund.Status.SUCCEEDED
-        refund.provider_metadata = {
-            "processed_at": timezone.now().isoformat(),
-        }
+    except PaymentProviderError as exc:
+        refund.status = PaymentRefund.Status.FAILED
+        refund.provider_metadata = {"error": str(exc)}
         refund.save(update_fields=["status", "provider_metadata"])
-
-        if refund_amount == payment.amount_minor:
-            payment.status = Payment.Status.REFUNDED
-            payment.save(update_fields=["status"])
-
-        AuditEvent.objects.create(
-            actor="system",
-            action="payment.refunded",
-            entity_type="PaymentRefund",
-            entity_reference=str(refund.id),
-            metadata={
-                "payment_id": payment.id,
-                "provider": payment.provider,
-                "provider_reference": payment.provider_reference,
-                "amount_minor": refund_amount,
-                "currency": payment.currency,
-                "full_refund": refund_amount == payment.amount_minor,
-            },
-        )
-
         return RefundResult(
             refund_id=refund.id,
-            payment_id=payment.id,
+            payment_id=refund.payment_id,
             amount_minor=refund.amount_minor,
             currency=refund.currency,
             status=refund.status,
             provider=refund.provider,
         )
+
+    refund.status = PaymentRefund.Status.SUCCEEDED
+    refund.provider_metadata = {
+        "processed_at": timezone.now().isoformat(),
+    }
+    refund.save(update_fields=["status", "provider_metadata"])
+
+    total_refunded = already_refunded + refund_amount
+    full_refund = total_refunded == payment.amount_minor
+    if full_refund:
+        payment.status = Payment.Status.REFUNDED
+        payment.save(update_fields=["status"])
+
+    AuditEvent.objects.create(
+        actor="system",
+        action="payment.refunded",
+        entity_type="PaymentRefund",
+        entity_reference=str(refund.id),
+        metadata={
+            "payment_id": payment.id,
+            "provider": payment.provider,
+            "provider_reference": payment.provider_reference,
+            "amount_minor": refund_amount,
+            "currency": payment.currency,
+            "full_refund": full_refund,
+        },
+    )
+
+    return RefundResult(
+        refund_id=refund.id,
+        payment_id=refund.payment_id,
+        amount_minor=refund.amount_minor,
+        currency=refund.currency,
+        status=refund.status,
+        provider=refund.provider,
+    )
 
 
 @transaction.atomic
@@ -162,12 +182,9 @@ def reconcile_payment(
     if provider.name != payment.provider:
         raise PaymentError("reconciliation provider does not match payment provider")
 
-    try:
-        verified: VerifiedPayment = provider.verify_payment(
-            provider_reference=payment.provider_reference,
-        )
-    except PaymentProviderError:
-        raise
+    verified: VerifiedPayment = provider.verify_payment(
+        provider_reference=payment.provider_reference,
+    )
 
     amount_matches = verified.amount_minor == payment.amount_minor
     currency_matches = verified.currency.upper() == payment.currency.upper()
