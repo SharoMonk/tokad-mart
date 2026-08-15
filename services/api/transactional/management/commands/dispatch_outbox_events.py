@@ -2,7 +2,7 @@ from django.core.management.base import BaseCommand
 
 from transactional.outbox_dispatcher import dispatch_outbox_events
 from transactional.payment_outbox import REFUND_REQUESTED_EVENT, make_refund_outbox_handler
-from transactional.paystack import PaystackProvider
+from transactional.providers.paystack import PaystackProvider
 
 
 class Command(BaseCommand):
