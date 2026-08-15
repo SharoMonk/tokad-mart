@@ -19,6 +19,13 @@ class POSCashSaleRequest:
     provider_reference: str
 
 
+@dataclass(frozen=True)
+class PaystackInitiationRequest:
+    sale_id: int
+    customer_email: str
+    idempotency_key: str
+
+
 def parse_pos_cash_sale_request(data: object) -> POSCashSaleRequest:
     if not isinstance(data, dict):
         raise POSRequestError("request body must be a JSON object")
@@ -124,4 +131,38 @@ def parse_pos_cash_sale_request(data: object) -> POSCashSaleRequest:
         sale_idempotency_key=values["sale_idempotency_key"],
         payment_idempotency_key=values["payment_idempotency_key"],
         provider_reference=values["provider_reference"],
+    )
+
+
+def parse_paystack_initiation_request(data: object) -> PaystackInitiationRequest:
+    if not isinstance(data, dict):
+        raise POSRequestError("request body must be a JSON object")
+
+    required = ("sale_id", "customer_email", "idempotency_key")
+    missing = [field for field in required if field not in data]
+    if missing:
+        raise POSRequestError(
+            f"missing required fields: {', '.join(missing)}"
+        )
+
+    try:
+        sale_id = int(data["sale_id"])
+    except (TypeError, ValueError) as exc:
+        raise POSRequestError("sale_id must be an integer") from exc
+
+    if sale_id <= 0:
+        raise POSRequestError("sale_id must be positive")
+
+    customer_email = data["customer_email"]
+    if not isinstance(customer_email, str) or not customer_email.strip():
+        raise POSRequestError("customer_email must be a non-empty string")
+
+    idempotency_key = data["idempotency_key"]
+    if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+        raise POSRequestError("idempotency_key must be a non-empty string")
+
+    return PaystackInitiationRequest(
+        sale_id=sale_id,
+        customer_email=customer_email.strip(),
+        idempotency_key=idempotency_key.strip(),
     )
