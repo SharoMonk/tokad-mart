@@ -5,6 +5,7 @@ from datetime import timedelta
 from typing import Callable
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from .models import OutboxEvent
@@ -25,17 +26,13 @@ def _claim_event(*, now, lease_seconds: int) -> OutboxEvent | None:
         event = (
             OutboxEvent.objects
             .select_for_update(skip_locked=True)
+            .filter(available_at__lte=now)
             .filter(
-                available_at__lte=now,
-            )
-            .filter(
-                (
-                    __import__("django").db.models.Q(status=OutboxEvent.Status.PENDING)
-                    | __import__("django").db.models.Q(status=OutboxEvent.Status.FAILED)
-                    | (
-                        __import__("django").db.models.Q(status=OutboxEvent.Status.PROCESSING)
-                        & __import__("django").db.models.Q(locked_until__lt=now)
-                    )
+                Q(status=OutboxEvent.Status.PENDING)
+                | Q(status=OutboxEvent.Status.FAILED)
+                | (
+                    Q(status=OutboxEvent.Status.PROCESSING)
+                    & Q(locked_until__lt=now)
                 )
             )
             .order_by("id")
@@ -48,7 +45,15 @@ def _claim_event(*, now, lease_seconds: int) -> OutboxEvent | None:
         event.attempts += 1
         event.locked_until = now + timedelta(seconds=lease_seconds)
         event.last_error = ""
-        event.save(update_fields=["status", "attempts", "locked_until", "last_error", "updated_at"])
+        event.save(
+            update_fields=[
+                "status",
+                "attempts",
+                "locked_until",
+                "last_error",
+                "updated_at",
+            ]
+        )
         return event
 
 
@@ -59,7 +64,15 @@ def _mark_completed(event_id: int, *, now) -> None:
         event.processed_at = now
         event.locked_until = None
         event.last_error = ""
-        event.save(update_fields=["status", "processed_at", "locked_until", "last_error", "updated_at"])
+        event.save(
+            update_fields=[
+                "status",
+                "processed_at",
+                "locked_until",
+                "last_error",
+                "updated_at",
+            ]
+        )
 
 
 def _mark_failed(event_id: int, error: Exception, *, now) -> None:
@@ -69,7 +82,15 @@ def _mark_failed(event_id: int, error: Exception, *, now) -> None:
         event.available_at = retry_available_at(event.attempts, now=now)
         event.locked_until = None
         event.last_error = str(error)
-        event.save(update_fields=["status", "available_at", "locked_until", "last_error", "updated_at"])
+        event.save(
+            update_fields=[
+                "status",
+                "available_at",
+                "locked_until",
+                "last_error",
+                "updated_at",
+            ]
+        )
 
 
 def dispatch_outbox_events(
@@ -100,7 +121,11 @@ def dispatch_outbox_events(
 
         handler = handlers.get(event.event_type)
         if handler is None:
-            _mark_failed(event.id, RuntimeError(f"no handler registered for {event.event_type}"), now=current)
+            _mark_failed(
+                event.id,
+                RuntimeError(f"no handler registered for {event.event_type}"),
+                now=current,
+            )
             failed += 1
             continue
 
@@ -113,4 +138,8 @@ def dispatch_outbox_events(
             _mark_completed(event.id, now=timezone.now())
             completed += 1
 
-    return DispatchResult(completed=completed, failed=failed, skipped=skipped)
+    return DispatchResult(
+        completed=completed,
+        failed=failed,
+        skipped=skipped,
+    )
