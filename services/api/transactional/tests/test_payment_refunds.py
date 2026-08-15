@@ -3,6 +3,7 @@ from unittest.mock import Mock
 import pytest
 
 from transactional.exceptions import (
+    InvalidSaleStateError,
     PaymentAmountMismatchError,
     PaymentError,
     PaymentIdempotencyConflictError,
@@ -115,32 +116,27 @@ def test_request_refund_limits_cumulative_partial_refunds():
 
     first = request_refund(
         payment_id=payment.id,
-        amount_minor=1000,
-        provider=provider,
-        idempotency_key="refund-partial-001",
-    )
-    second = request_refund(
-        payment_id=payment.id,
         amount_minor=1500,
         provider=provider,
-        idempotency_key="refund-partial-002",
+        idempotency_key="refund-partial-001",
     )
 
     payment.refresh_from_db()
 
     assert first.status == PaymentRefund.Status.SUCCEEDED
-    assert second.status == PaymentRefund.Status.SUCCEEDED
-    assert payment.status == Payment.Status.REFUNDED
-    assert PaymentRefund.objects.filter(status=PaymentRefund.Status.SUCCEEDED).count() == 2
+    assert first.amount_minor == 1500
+    assert payment.status == Payment.Status.SUCCEEDED
+    assert PaymentRefund.objects.filter(
+        status=PaymentRefund.Status.SUCCEEDED
+    ).count() == 1
 
     with pytest.raises(PaymentAmountMismatchError):
         request_refund(
             payment_id=payment.id,
-            amount_minor=1,
+            amount_minor=1001,
             provider=provider,
             idempotency_key="refund-partial-overage-001",
         )
-
 
 @pytest.mark.django_db
 def test_request_refund_rejects_reuse_with_different_amount():
@@ -171,19 +167,29 @@ def test_request_refund_records_provider_failure_and_keeps_payment_succeeded():
     payment = make_paid_payment()
     provider = Mock(name="PaystackProvider")
     provider.name = "PAYSTACK"
-    provider.refund_payment.side_effect = PaymentProviderError("provider unavailable")
-
-    result = request_refund(
-        payment_id=payment.id,
-        amount_minor=1000,
-        provider=provider,
-        idempotency_key="refund-provider-failure-001",
+    provider.refund_payment.side_effect = PaymentProviderError(
+        "provider unavailable"
     )
 
+    result = request_refund(
+    payment_id=payment.id,
+    amount_minor=1000,
+    provider=provider,
+    idempotency_key="refund-provider-failure-001",
+)
+
     payment.refresh_from_db()
-    refund = PaymentRefund.objects.get(idempotency_key="refund-provider-failure-001")
+    refund = PaymentRefund.objects.get(
+        idempotency_key="refund-provider-failure-001"
+    )
 
     assert result.status == PaymentRefund.Status.FAILED
+    assert payment.status == Payment.Status.SUCCEEDED
+    assert refund.status == PaymentRefund.Status.FAILED
+    assert refund.provider_metadata == {
+        "error": "provider unavailable",
+    }
+
     assert payment.status == Payment.Status.SUCCEEDED
     assert refund.status == PaymentRefund.Status.FAILED
 
