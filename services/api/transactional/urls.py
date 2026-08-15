@@ -1,8 +1,8 @@
 from django.urls import path
 
+from .payment_initiation_api import initiate_paystack_payment
 from .views import (
     health,
-    initiate_paystack_payment,
     paystack_webhook,
     pos_cash_sale,
     reconcile_payment_endpoint,
