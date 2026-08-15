@@ -1,7 +1,6 @@
 from dataclasses import dataclass
-from datetime import datetime
 
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 
 from .exceptions import PaymentError, PaymentNotFoundError
@@ -24,6 +23,14 @@ class WebhookResult:
     already_processed: bool
 
 
+def _lock_webhook_event(*, provider: str, event_id: str) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            [f"webhook:{provider}:{event_id}"],
+        )
+
+
 @transaction.atomic
 def process_payment_webhook(
     *,
@@ -33,13 +40,17 @@ def process_payment_webhook(
     verified: VerifiedPayment,
 ) -> WebhookResult:
     """Apply a verified provider event exactly once."""
+    _lock_webhook_event(provider=provider, event_id=event_id)
+
     existing_event = PaymentWebhookEvent.objects.filter(
         provider=provider,
         event_id=event_id,
     ).first()
 
     if existing_event is not None:
-        payment = Payment.objects.get(id=existing_event.payment_id)
+        payment = Payment.objects.select_related("sale").get(
+            id=existing_event.payment_id,
+        )
         return WebhookResult(
             event_id=event_id,
             payment_id=payment.id,
@@ -55,13 +66,19 @@ def process_payment_webhook(
             provider_reference=provider_reference,
         )
     except Payment.DoesNotExist as exc:
-        raise PaymentNotFoundError("payment was not found for provider reference") from exc
+        raise PaymentNotFoundError(
+            "payment was not found for provider reference"
+        ) from exc
 
     if verified.provider != provider:
-        raise PaymentWebhookError("webhook provider does not match payment provider")
+        raise PaymentWebhookError(
+            "webhook provider does not match payment provider"
+        )
 
     if verified.provider_reference != provider_reference:
-        raise PaymentWebhookError("webhook provider reference does not match payment")
+        raise PaymentWebhookError(
+            "webhook provider reference does not match payment"
+        )
 
     try:
         validate_verified_payment(
@@ -80,6 +97,15 @@ def process_payment_webhook(
     )
 
     if payment.status == Payment.Status.SUCCEEDED:
+        event.processed_at = timezone.now()
+        event.payload = {
+            "provider": provider,
+            "provider_reference": provider_reference,
+            "payment_id": payment.id,
+            "sale_id": payment.sale_id,
+        }
+        event.save(update_fields=["processed_at", "payload"])
+
         return WebhookResult(
             event_id=event_id,
             payment_id=payment.id,
