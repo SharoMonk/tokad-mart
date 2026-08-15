@@ -131,6 +131,23 @@ class Payment(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 
+class PaymentWebhookEvent(models.Model):
+    provider = models.CharField(max_length=64)
+    event_id = models.CharField(max_length=255)
+    payment = models.ForeignKey(Payment, on_delete=models.PROTECT, related_name="webhook_events")
+    payload = models.JSONField(default=dict)
+    received_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["provider", "event_id"],
+                name="uniq_payment_webhook_provider_event",
+            ),
+        ]
+
+
 class InventoryMovement(models.Model):
     class Reason(models.TextChoices):
         SALE = "SALE"
