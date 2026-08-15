@@ -2,6 +2,7 @@ import pytest
 from django.db import IntegrityError
 from unittest.mock import patch
 
+from transactional.exceptions import PaymentError
 from transactional.models import (
     AuditEvent,
     IdempotencyRecord,
@@ -13,7 +14,6 @@ from transactional.models import (
     SaleLine,
 )
 from transactional.payment_services import (
-    PaymentError,
     create_pending_sale,
     finalize_paid_sale,
     process_pos_cash_sale,
@@ -272,7 +272,7 @@ def test_duplicate_provider_reference_is_rejected():
         idempotency_key="payment-provider-ref-001",
     )
 
-    with pytest.raises(IntegrityError):
+    with pytest.raises(PaymentError, match="provider reference"):
         record_successful_payment(
             sale_id=sale_two.sale_id,
             amount_minor=1000,
