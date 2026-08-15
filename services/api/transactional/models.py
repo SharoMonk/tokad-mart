@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 
 
@@ -23,6 +24,56 @@ class InventoryItem(models.Model):
 class Customer(models.Model):
     name = models.CharField(max_length=255)
     phone = models.CharField(max_length=32, blank=True)
+
+
+class POSLocation(models.Model):
+    code = models.CharField(max_length=64, unique=True)
+    name = models.CharField(max_length=255)
+    is_active = models.BooleanField(default=True)
+
+
+class POSTerminal(models.Model):
+    location = models.ForeignKey(POSLocation, on_delete=models.PROTECT, related_name="terminals")
+    code = models.CharField(max_length=64)
+    name = models.CharField(max_length=255)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["location", "code"], name="uniq_pos_terminal_location_code"),
+        ]
+
+
+class POSOperator(models.Model):
+    class Role(models.TextChoices):
+        OPERATOR = "OPERATOR"
+        SUPERVISOR = "SUPERVISOR"
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="pos_operator")
+    role = models.CharField(max_length=32, choices=Role.choices, default=Role.OPERATOR)
+    is_active = models.BooleanField(default=True)
+    locations = models.ManyToManyField(POSLocation, through="POSOperatorLocation", related_name="operators")
+    terminals = models.ManyToManyField(POSTerminal, through="POSOperatorTerminal", related_name="operators")
+
+
+class POSOperatorLocation(models.Model):
+    operator = models.ForeignKey(POSOperator, on_delete=models.CASCADE, related_name="location_assignments")
+    location = models.ForeignKey(POSLocation, on_delete=models.CASCADE, related_name="operator_assignments")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["operator", "location"], name="uniq_pos_operator_location"),
+        ]
+
+
+class POSOperatorTerminal(models.Model):
+    operator = models.ForeignKey(POSOperator, on_delete=models.CASCADE, related_name="terminal_assignments")
+    terminal = models.ForeignKey(POSTerminal, on_delete=models.CASCADE, related_name="operator_assignments")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["operator", "terminal"], name="uniq_pos_operator_terminal"),
+        ]
 
 
 class Sale(models.Model):
