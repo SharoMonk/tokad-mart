@@ -24,6 +24,82 @@ class PaystackInitiationRequest:
     sale_id: int
     customer_email: str
     idempotency_key: str
+    location_code: str
+    terminal_code: str
+
+
+@dataclass(frozen=True)
+class PaymentMutationRequest:
+    payment_id: int
+    idempotency_key: str
+    amount_minor: int | None
+    location_code: str
+    terminal_code: str
+
+
+def _required_string(data: dict, field: str) -> str:
+    value = data.get(field)
+    if not isinstance(value, str) or not value.strip():
+        raise POSRequestError(f"{field} must be a non-empty string")
+    return value.strip()
+
+
+def parse_paystack_initiation_request(data: object) -> PaystackInitiationRequest:
+    if not isinstance(data, dict):
+        raise POSRequestError("request body must be a JSON object")
+
+    try:
+        sale_id = int(data["sale_id"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise POSRequestError("sale_id must be an integer") from exc
+
+    if sale_id <= 0:
+        raise POSRequestError("sale_id must be positive")
+
+    customer_email = _required_string(data, "customer_email")
+    idempotency_key = _required_string(data, "idempotency_key")
+    location_code = _required_string(data, "location_code")
+    terminal_code = _required_string(data, "terminal_code")
+
+    return PaystackInitiationRequest(
+        sale_id=sale_id,
+        customer_email=customer_email,
+        idempotency_key=idempotency_key,
+        location_code=location_code,
+        terminal_code=terminal_code,
+    )
+
+
+def parse_payment_mutation_request(data: object) -> PaymentMutationRequest:
+    if not isinstance(data, dict):
+        raise POSRequestError("request body must be a JSON object")
+
+    try:
+        payment_id = int(data["payment_id"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise POSRequestError("payment_id must be an integer") from exc
+
+    if payment_id <= 0:
+        raise POSRequestError("payment_id must be positive")
+
+    amount = data.get("amount_minor")
+    if amount is None:
+        amount_minor = None
+    else:
+        try:
+            amount_minor = int(amount)
+        except (TypeError, ValueError) as exc:
+            raise POSRequestError("amount_minor must be an integer") from exc
+        if amount_minor <= 0:
+            raise POSRequestError("amount_minor must be positive")
+
+    return PaymentMutationRequest(
+        payment_id=payment_id,
+        idempotency_key=_required_string(data, "idempotency_key"),
+        amount_minor=amount_minor,
+        location_code=_required_string(data, "location_code"),
+        terminal_code=_required_string(data, "terminal_code"),
+    )
 
 
 def parse_pos_cash_sale_request(data: object) -> POSCashSaleRequest:
@@ -84,20 +160,9 @@ def parse_pos_cash_sale_request(data: object) -> POSCashSaleRequest:
             )
         )
 
-    location_code = data["location_code"]
-    terminal_code = data["terminal_code"]
-    currency = data["currency"]
-
-    if not isinstance(location_code, str) or not location_code.strip():
-        raise POSRequestError("location_code must be a non-empty string")
-
-    if not isinstance(terminal_code, str) or not terminal_code.strip():
-        raise POSRequestError("terminal_code must be a non-empty string")
-
-    if not isinstance(currency, str) or not currency.strip():
-        raise POSRequestError("currency must be a non-empty string")
-
-    currency = currency.upper()
+    location_code = _required_string(data, "location_code")
+    terminal_code = _required_string(data, "terminal_code")
+    currency = _required_string(data, "currency").upper()
 
     try:
         amount_minor = int(data["amount_minor"])
@@ -107,62 +172,13 @@ def parse_pos_cash_sale_request(data: object) -> POSCashSaleRequest:
     if amount_minor <= 0:
         raise POSRequestError("amount_minor must be positive")
 
-    string_fields = (
-        "sale_idempotency_key",
-        "payment_idempotency_key",
-        "provider_reference",
-    )
-
-    values: dict[str, str] = {}
-    for field in string_fields:
-        value = data[field]
-        if not isinstance(value, str) or not value.strip():
-            raise POSRequestError(
-                f"{field} must be a non-empty string"
-            )
-        values[field] = value.strip()
-
     return POSCashSaleRequest(
         lines=lines,
-        location_code=location_code.strip(),
-        terminal_code=terminal_code.strip(),
+        location_code=location_code,
+        terminal_code=terminal_code,
         currency=currency,
         amount_minor=amount_minor,
-        sale_idempotency_key=values["sale_idempotency_key"],
-        payment_idempotency_key=values["payment_idempotency_key"],
-        provider_reference=values["provider_reference"],
-    )
-
-
-def parse_paystack_initiation_request(data: object) -> PaystackInitiationRequest:
-    if not isinstance(data, dict):
-        raise POSRequestError("request body must be a JSON object")
-
-    required = ("sale_id", "customer_email", "idempotency_key")
-    missing = [field for field in required if field not in data]
-    if missing:
-        raise POSRequestError(
-            f"missing required fields: {', '.join(missing)}"
-        )
-
-    try:
-        sale_id = int(data["sale_id"])
-    except (TypeError, ValueError) as exc:
-        raise POSRequestError("sale_id must be an integer") from exc
-
-    if sale_id <= 0:
-        raise POSRequestError("sale_id must be positive")
-
-    customer_email = data["customer_email"]
-    if not isinstance(customer_email, str) or not customer_email.strip():
-        raise POSRequestError("customer_email must be a non-empty string")
-
-    idempotency_key = data["idempotency_key"]
-    if not isinstance(idempotency_key, str) or not idempotency_key.strip():
-        raise POSRequestError("idempotency_key must be a non-empty string")
-
-    return PaystackInitiationRequest(
-        sale_id=sale_id,
-        customer_email=customer_email.strip(),
-        idempotency_key=idempotency_key.strip(),
+        sale_idempotency_key=_required_string(data, "sale_idempotency_key"),
+        payment_idempotency_key=_required_string(data, "payment_idempotency_key"),
+        provider_reference=_required_string(data, "provider_reference"),
     )
