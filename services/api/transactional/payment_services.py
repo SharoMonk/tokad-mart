@@ -1,9 +1,24 @@
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
+from .exceptions import (
+    CheckoutError,
+    InsufficientStockError,
+    InvalidSaleStateError,
+    InventoryMissingError,
+    PaymentAmountMismatchError,
+    PaymentCurrencyMismatchError,
+    PaymentError,
+    PaymentIdempotencyConflictError,
+    PaymentNotFoundError,
+    ProductUnavailableError,
+    ProviderReferenceConflictError,
+    SaleLinesMissingError,
+    SaleNotFoundError,
+)
 from .models import (
     AuditEvent,
     IdempotencyRecord,
@@ -14,16 +29,7 @@ from .models import (
     Sale,
     SaleLine,
 )
-from .services import (
-    CheckoutError,
-    CheckoutLine,
-    CheckoutResult,
-    _fingerprint,
-)
-
-
-class PaymentError(Exception):
-    """Raised when a payment operation violates a domain invariant."""
+from .services import CheckoutLine, CheckoutResult, _fingerprint
 
 
 @dataclass(frozen=True)
@@ -114,10 +120,12 @@ def create_pending_sale(
     }
 
     if len(products) != len(product_ids):
-        raise CheckoutError("one or more products are unavailable")
+        raise ProductUnavailableError("one or more products are unavailable")
 
     if any(product.currency != currency for product in products.values()):
-        raise CheckoutError("sale currency does not match product currency")
+        raise PaymentCurrencyMismatchError(
+            "sale currency does not match product currency"
+        )
 
     inventory = {
         item.product_id: item
@@ -128,7 +136,7 @@ def create_pending_sale(
     }
 
     if len(inventory) != len(product_ids):
-        raise CheckoutError("inventory record is missing")
+        raise InventoryMissingError("inventory record is missing")
 
     total = 0
     resolved: list[tuple[Product, int, int]] = []
@@ -189,7 +197,7 @@ def record_successful_payment(
 ) -> PaymentResult:
     """Record a successful payment without consuming inventory."""
     if amount_minor <= 0:
-        raise PaymentError("payment amount must be positive")
+        raise PaymentAmountMismatchError("payment amount must be positive")
 
     _lock_payment_key(idempotency_key)
 
@@ -203,34 +211,49 @@ def record_successful_payment(
             or existing.method != method
             or existing.provider != provider
         ):
-            raise PaymentError(
+            raise PaymentIdempotencyConflictError(
                 "payment idempotency key was reused with a different request"
             )
         return _payment_result(existing)
 
-    sale = Sale.objects.select_for_update().get(id=sale_id)
+    try:
+        sale = Sale.objects.select_for_update().get(id=sale_id)
+    except Sale.DoesNotExist as exc:
+        raise SaleNotFoundError("sale was not found") from exc
 
     if sale.status != Sale.Status.PENDING_PAYMENT:
-        raise PaymentError(
+        raise InvalidSaleStateError(
             f"sale cannot accept payment in status {sale.status}"
         )
 
     if currency != sale.currency:
-        raise PaymentError("payment currency does not match sale currency")
+        raise PaymentCurrencyMismatchError(
+            "payment currency does not match sale currency"
+        )
 
     if amount_minor != sale.total_minor:
-        raise PaymentError("payment amount does not match sale total")
+        raise PaymentAmountMismatchError(
+            "payment amount does not match sale total"
+        )
 
-    payment = Payment.objects.create(
-        sale=sale,
-        provider=provider,
-        provider_reference=provider_reference,
-        idempotency_key=idempotency_key,
-        method=method,
-        amount_minor=amount_minor,
-        currency=currency,
-        status=Payment.Status.SUCCEEDED,
-    )
+    try:
+        with transaction.atomic():
+            payment = Payment.objects.create(
+                sale=sale,
+                provider=provider,
+                provider_reference=provider_reference,
+                idempotency_key=idempotency_key,
+                method=method,
+                amount_minor=amount_minor,
+                currency=currency,
+                status=Payment.Status.SUCCEEDED,
+            )
+    except IntegrityError as exc:
+        if Payment.objects.filter(provider_reference=provider_reference).exists():
+            raise ProviderReferenceConflictError(
+                "provider reference is already associated with another payment"
+            ) from exc
+        raise
 
     AuditEvent.objects.create(
         actor="system",
@@ -256,7 +279,10 @@ def finalize_paid_sale(
     payment_id: int,
 ) -> CheckoutResult:
     """Consume inventory and complete a sale after successful payment."""
-    sale = Sale.objects.select_for_update().get(id=sale_id)
+    try:
+        sale = Sale.objects.select_for_update().get(id=sale_id)
+    except Sale.DoesNotExist as exc:
+        raise SaleNotFoundError("sale was not found") from exc
 
     if sale.status == Sale.Status.COMPLETED:
         return CheckoutResult(
@@ -266,23 +292,32 @@ def finalize_paid_sale(
         )
 
     if sale.status != Sale.Status.PENDING_PAYMENT:
-        raise PaymentError(
+        raise InvalidSaleStateError(
             f"sale cannot be finalized in status {sale.status}"
         )
 
-    payment = Payment.objects.select_for_update().get(
-        id=payment_id,
-        sale=sale,
-    )
+    try:
+        payment = Payment.objects.select_for_update().get(
+            id=payment_id,
+            sale=sale,
+        )
+    except Payment.DoesNotExist as exc:
+        raise PaymentNotFoundError("payment was not found for this sale") from exc
 
     if payment.status != Payment.Status.SUCCEEDED:
-        raise PaymentError("sale cannot be finalized without a successful payment")
+        raise InvalidSaleStateError(
+            "sale cannot be finalized without a successful payment"
+        )
 
     if payment.amount_minor != sale.total_minor:
-        raise PaymentError("successful payment amount does not match sale total")
+        raise PaymentAmountMismatchError(
+            "successful payment amount does not match sale total"
+        )
 
     if payment.currency != sale.currency:
-        raise PaymentError("successful payment currency does not match sale currency")
+        raise PaymentCurrencyMismatchError(
+            "successful payment currency does not match sale currency"
+        )
 
     lines = list(
         SaleLine.objects.select_related("product")
@@ -291,7 +326,7 @@ def finalize_paid_sale(
     )
 
     if not lines:
-        raise PaymentError("sale has no sale lines")
+        raise SaleLinesMissingError("sale has no sale lines")
 
     quantities: dict[int, int] = {}
     for line in lines:
@@ -311,13 +346,15 @@ def finalize_paid_sale(
     }
 
     if len(inventory) != len(product_ids):
-        raise PaymentError("inventory record is missing")
+        raise InventoryMissingError("inventory record is missing")
 
     for product_id in product_ids:
         item = inventory[product_id]
         quantity = quantities[product_id]
         if item.quantity < quantity:
-            raise PaymentError(f"insufficient stock for product {product_id}")
+            raise InsufficientStockError(
+                f"insufficient stock for product {product_id}"
+            )
 
     for product_id in product_ids:
         item = inventory[product_id]
