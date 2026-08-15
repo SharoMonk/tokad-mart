@@ -1,14 +1,17 @@
+from datetime import timedelta
 from unittest.mock import Mock
 
 import pytest
+from django.utils import timezone
 
 from transactional.exceptions import (
-    InvalidSaleStateError,
     PaymentAmountMismatchError,
     PaymentError,
     PaymentIdempotencyConflictError,
 )
-from transactional.models import InventoryItem, Payment, PaymentRefund, Product
+from transactional.models import InventoryItem, OutboxEvent, Payment, PaymentRefund, Product
+from transactional.outbox_dispatcher import dispatch_outbox_events
+from transactional.payment_outbox import REFUND_REQUESTED_EVENT, make_refund_outbox_handler
 from transactional.payment_providers import PaymentProviderError, VerifiedPayment
 from transactional.payment_refunds import reconcile_payment, request_refund
 from transactional.payment_services import create_pending_sale, record_successful_payment
@@ -41,8 +44,12 @@ def make_paid_payment():
     return Payment.objects.get(id=payment.payment_id)
 
 
+def dispatch_refund(provider):
+    return dispatch_outbox_events({REFUND_REQUESTED_EVENT: make_refund_outbox_handler(provider)})
+
+
 @pytest.mark.django_db
-def test_request_refund_marks_full_payment_refunded():
+def test_request_refund_creates_request_and_outbox_event():
     payment = make_paid_payment()
     provider = Mock(name="PaystackProvider")
     provider.name = "PAYSTACK"
@@ -56,10 +63,38 @@ def test_request_refund_marks_full_payment_refunded():
 
     payment.refresh_from_db()
 
-    assert result.status == PaymentRefund.Status.SUCCEEDED
+    assert result.status == PaymentRefund.Status.REQUESTED
     assert result.amount_minor == 2500
-    assert payment.status == Payment.Status.REFUNDED
+    assert payment.status == Payment.Status.SUCCEEDED
     assert PaymentRefund.objects.count() == 1
+    assert OutboxEvent.objects.count() == 1
+    assert OutboxEvent.objects.get().event_type == REFUND_REQUESTED_EVENT
+    provider.refund_payment.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_dispatch_refund_completes_full_payment_refund():
+    payment = make_paid_payment()
+    provider = Mock(name="PaystackProvider")
+    provider.name = "PAYSTACK"
+
+    request_refund(
+        payment_id=payment.id,
+        amount_minor=None,
+        provider=provider,
+        idempotency_key="refund-dispatch-001",
+    )
+
+    result = dispatch_refund(provider)
+
+    payment.refresh_from_db()
+    refund = PaymentRefund.objects.get(idempotency_key="refund-dispatch-001")
+    event = OutboxEvent.objects.get(idempotency_key="payment-refund:refund-dispatch-001")
+
+    assert result.completed == 1
+    assert refund.status == PaymentRefund.Status.SUCCEEDED
+    assert payment.status == Payment.Status.REFUNDED
+    assert event.status == OutboxEvent.Status.COMPLETED
     provider.refund_payment.assert_called_once_with(
         provider_reference="PSK-REFUND-001",
         amount_minor=2500,
@@ -86,8 +121,10 @@ def test_request_refund_retry_is_idempotent():
     )
 
     assert first == second
+    assert first.status == PaymentRefund.Status.REQUESTED
     assert PaymentRefund.objects.count() == 1
-    provider.refund_payment.assert_called_once()
+    assert OutboxEvent.objects.count() == 1
+    provider.refund_payment.assert_not_called()
 
 
 @pytest.mark.django_db
@@ -105,6 +142,7 @@ def test_request_refund_rejects_amount_above_payment():
         )
 
     assert PaymentRefund.objects.count() == 0
+    assert OutboxEvent.objects.count() == 0
     provider.refund_payment.assert_not_called()
 
 
@@ -121,14 +159,13 @@ def test_request_refund_limits_cumulative_partial_refunds():
         idempotency_key="refund-partial-001",
     )
 
+    dispatch_refund(provider)
     payment.refresh_from_db()
 
-    assert first.status == PaymentRefund.Status.SUCCEEDED
-    assert first.amount_minor == 1500
+    assert first.status == PaymentRefund.Status.REQUESTED
+    refund = PaymentRefund.objects.get(idempotency_key="refund-partial-001")
+    assert refund.status == PaymentRefund.Status.SUCCEEDED
     assert payment.status == Payment.Status.SUCCEEDED
-    assert PaymentRefund.objects.filter(
-        status=PaymentRefund.Status.SUCCEEDED
-    ).count() == 1
 
     with pytest.raises(PaymentAmountMismatchError):
         request_refund(
@@ -137,6 +174,7 @@ def test_request_refund_limits_cumulative_partial_refunds():
             provider=provider,
             idempotency_key="refund-partial-overage-001",
         )
+
 
 @pytest.mark.django_db
 def test_request_refund_rejects_reuse_with_different_amount():
@@ -160,38 +198,66 @@ def test_request_refund_rejects_reuse_with_different_amount():
         )
 
     assert PaymentRefund.objects.count() == 1
+    assert OutboxEvent.objects.count() == 1
 
 
 @pytest.mark.django_db
-def test_request_refund_records_provider_failure_and_keeps_payment_succeeded():
+def test_provider_failure_keeps_refund_requested_and_outbox_retryable():
     payment = make_paid_payment()
     provider = Mock(name="PaystackProvider")
     provider.name = "PAYSTACK"
-    provider.refund_payment.side_effect = PaymentProviderError(
-        "provider unavailable"
-    )
+    provider.refund_payment.side_effect = PaymentProviderError("provider unavailable")
 
     result = request_refund(
-    payment_id=payment.id,
-    amount_minor=1000,
-    provider=provider,
-    idempotency_key="refund-provider-failure-001",
-)
-
-    payment.refresh_from_db()
-    refund = PaymentRefund.objects.get(
-        idempotency_key="refund-provider-failure-001"
+        payment_id=payment.id,
+        amount_minor=1000,
+        provider=provider,
+        idempotency_key="refund-provider-failure-001",
     )
 
-    assert result.status == PaymentRefund.Status.FAILED
-    assert payment.status == Payment.Status.SUCCEEDED
-    assert refund.status == PaymentRefund.Status.FAILED
-    assert refund.provider_metadata == {
-        "error": "provider unavailable",
-    }
+    dispatch_result = dispatch_refund(provider)
+    payment.refresh_from_db()
+    refund = PaymentRefund.objects.get(idempotency_key="refund-provider-failure-001")
+    event = OutboxEvent.objects.get(idempotency_key="payment-refund:refund-provider-failure-001")
 
+    assert result.status == PaymentRefund.Status.REQUESTED
+    assert dispatch_result.failed == 1
     assert payment.status == Payment.Status.SUCCEEDED
-    assert refund.status == PaymentRefund.Status.FAILED
+    assert refund.status == PaymentRefund.Status.REQUESTED
+    assert refund.provider_metadata["error"] == "provider unavailable"
+    assert event.status == OutboxEvent.Status.FAILED
+
+
+@pytest.mark.django_db
+def test_provider_failure_can_be_retried_successfully():
+    payment = make_paid_payment()
+    provider = Mock(name="PaystackProvider")
+    provider.name = "PAYSTACK"
+    provider.refund_payment.side_effect = [
+        PaymentProviderError("temporary failure"),
+        None,
+    ]
+
+    request_refund(
+        payment_id=payment.id,
+        amount_minor=1000,
+        provider=provider,
+        idempotency_key="refund-retry-provider-001",
+    )
+
+    first_dispatch = dispatch_refund(provider)
+    event = OutboxEvent.objects.get(idempotency_key="payment-refund:refund-retry-provider-001")
+    event.available_at = timezone.now() - timedelta(seconds=1)
+    event.save(update_fields=["available_at"])
+
+    second_dispatch = dispatch_refund(provider)
+
+    refund = PaymentRefund.objects.get(idempotency_key="refund-retry-provider-001")
+
+    assert first_dispatch.failed == 1
+    assert second_dispatch.completed == 1
+    assert refund.status == PaymentRefund.Status.SUCCEEDED
+    assert provider.refund_payment.call_count == 2
 
 
 @pytest.mark.django_db
