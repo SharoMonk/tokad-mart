@@ -38,6 +38,7 @@ def process_payment_webhook(
     event_id: str,
     provider_reference: str,
     verified: VerifiedPayment,
+    payload: dict | None = None,
 ) -> WebhookResult:
     """Apply a verified provider event exactly once."""
     _lock_webhook_event(provider=provider, event_id=event_id)
@@ -93,18 +94,12 @@ def process_payment_webhook(
         provider=provider,
         event_id=event_id,
         payment=payment,
-        payload={},
+        payload=payload or {},
     )
 
     if payment.status == Payment.Status.SUCCEEDED:
         event.processed_at = timezone.now()
-        event.payload = {
-            "provider": provider,
-            "provider_reference": provider_reference,
-            "payment_id": payment.id,
-            "sale_id": payment.sale_id,
-        }
-        event.save(update_fields=["processed_at", "payload"])
+        event.save(update_fields=["processed_at"])
 
         return WebhookResult(
             event_id=event_id,
@@ -128,21 +123,14 @@ def process_payment_webhook(
         payment_id=payment.id,
     )
 
-    sale = payment.sale
     event.processed_at = timezone.now()
-    event.payload = {
-        "provider": provider,
-        "provider_reference": provider_reference,
-        "payment_id": payment.id,
-        "sale_id": completed.sale_id,
-    }
-    event.save(update_fields=["processed_at", "payload"])
+    event.save(update_fields=["processed_at"])
 
     return WebhookResult(
         event_id=event_id,
         payment_id=payment.id,
         payment_status=payment.status,
         sale_id=completed.sale_id,
-        sale_status=sale.status,
+        sale_status=Sale.Status.COMPLETED if False else payment.sale.status,
         already_processed=False,
     )
