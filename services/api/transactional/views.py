@@ -13,17 +13,17 @@ from .exceptions import (
     InsufficientStockError,
     InventoryMissingError,
     PaymentError,
-    PaymentProviderError,
+    PaymentNotFoundError,
     ProductUnavailableError,
     SaleNotFoundError,
 )
 from .models import Sale
+from .payment_providers import PaymentProviderError, VerifiedPayment
 from .payment_services import (
     initialize_external_payment,
     process_pos_cash_sale,
 )
 from .payment_webhooks import PaymentWebhookError, process_payment_webhook
-from .payment_providers import VerifiedPayment
 from .permissions import IsPOSOperator
 from .pos_access import POSAccessError, authorize_pos_scope
 from .providers.paystack import PaystackProvider
@@ -371,10 +371,7 @@ def paystack_webhook(request):
             status=400,
         )
 
-    event_id = str(
-        data.get("id")
-        or hashlib.sha256(raw_body).hexdigest()
-    )
+    event_id = str(data.get("id") or hashlib.sha256(raw_body).hexdigest())
 
     try:
         result = process_payment_webhook(
@@ -389,7 +386,7 @@ def paystack_webhook(request):
                 succeeded=str(data.get("status")) == "success",
             ),
         )
-    except SaleNotFoundError as exc:
+    except PaymentNotFoundError as exc:
         return JsonResponse(
             {
                 "error": "payment_not_found",
@@ -397,7 +394,7 @@ def paystack_webhook(request):
             },
             status=404,
         )
-    except PaymentError as exc:
+    except PaymentWebhookError as exc:
         return JsonResponse(
             {
                 "error": "webhook_rejected",
