@@ -3,6 +3,9 @@ import logging
 
 from django.http import JsonResponse
 from django.views.decorators.http import require_POST
+from rest_framework.authentication import BasicAuthentication, SessionAuthentication
+from rest_framework.decorators import authentication_classes, permission_classes
+from rest_framework.permissions import IsAuthenticated
 
 from .exceptions import (
     CheckoutError,
@@ -13,6 +16,7 @@ from .exceptions import (
     SaleNotFoundError,
 )
 from .payment_services import process_pos_cash_sale
+from .permissions import IsPOSOperator
 from .serializers import POSRequestError, parse_pos_cash_sale_request
 
 logger = logging.getLogger(__name__)
@@ -23,6 +27,8 @@ def health(_request):
 
 
 @require_POST
+@authentication_classes([BasicAuthentication, SessionAuthentication])
+@permission_classes([IsAuthenticated, IsPOSOperator])
 def pos_cash_sale(request):
     try:
         payload = json.loads(request.body)
