@@ -4,7 +4,7 @@ from django.db import connection, transaction
 from django.utils import timezone
 
 from .exceptions import PaymentError, PaymentNotFoundError
-from .models import Payment, PaymentWebhookEvent
+from .models import Payment, PaymentWebhookEvent, Sale
 from .payment_providers import VerifiedPayment, validate_verified_payment
 from .payment_services import finalize_paid_sale
 
@@ -126,11 +126,13 @@ def process_payment_webhook(
     event.processed_at = timezone.now()
     event.save(update_fields=["processed_at"])
 
+    sale = Sale.objects.get(id=completed.sale_id)
+
     return WebhookResult(
         event_id=event_id,
         payment_id=payment.id,
         payment_status=payment.status,
         sale_id=completed.sale_id,
-        sale_status=Sale.Status.COMPLETED if False else payment.sale.status,
+        sale_status=sale.status,
         already_processed=False,
     )
