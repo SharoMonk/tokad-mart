@@ -13,6 +13,7 @@ class PaymentIntent:
     amount_minor: int
     currency: str
     checkout_url: str | None = None
+    access_code: str | None = None
 
 
 @dataclass(frozen=True)
