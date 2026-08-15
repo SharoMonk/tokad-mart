@@ -1,3 +1,4 @@
+import hashlib
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
@@ -29,6 +30,7 @@ from .models import (
     Sale,
     SaleLine,
 )
+from .payment_providers import PaymentIntent, PaymentProvider, PaymentProviderError
 from .services import CheckoutLine, CheckoutResult, _fingerprint
 
 
@@ -40,6 +42,19 @@ class PaymentResult:
     currency: str
     status: str
     provider_reference: str
+
+
+@dataclass(frozen=True)
+class PaymentInitiationResult:
+    payment_id: int
+    sale_id: int
+    provider: str
+    provider_reference: str
+    amount_minor: int
+    currency: str
+    status: str
+    checkout_url: str | None
+    access_code: str | None
 
 
 @dataclass(frozen=True)
@@ -71,6 +86,28 @@ def _payment_result(payment: Payment) -> PaymentResult:
         status=payment.status,
         provider_reference=payment.provider_reference,
     )
+
+
+def _payment_initiation_result(payment: Payment) -> PaymentInitiationResult:
+    metadata = payment.provider_metadata or {}
+    return PaymentInitiationResult(
+        payment_id=payment.id,
+        sale_id=payment.sale_id,
+        provider=payment.provider,
+        provider_reference=payment.provider_reference,
+        amount_minor=payment.amount_minor,
+        currency=payment.currency,
+        status=payment.status,
+        checkout_url=metadata.get("checkout_url"),
+        access_code=metadata.get("access_code"),
+    )
+
+
+def _stable_provider_reference(provider: str, idempotency_key: str, sale_id: int) -> str:
+    digest = hashlib.sha256(
+        f"{provider}:{idempotency_key}:{sale_id}".encode("utf-8")
+    ).hexdigest()[:24]
+    return f"TK-{sale_id}-{digest}"
 
 
 @transaction.atomic
@@ -270,6 +307,99 @@ def record_successful_payment(
     )
 
     return _payment_result(payment)
+
+
+@transaction.atomic
+def initialize_external_payment(
+    *,
+    sale_id: int,
+    customer_email: str,
+    provider: PaymentProvider,
+    idempotency_key: str,
+) -> PaymentInitiationResult:
+    """Initialize a provider checkout and persist its pending payment record."""
+    if not customer_email.strip():
+        raise PaymentError("customer email is required")
+
+    _lock_payment_key(idempotency_key)
+
+    existing = Payment.objects.filter(idempotency_key=idempotency_key).first()
+    if existing is not None:
+        if existing.sale_id != sale_id or existing.provider != provider.name:
+            raise PaymentIdempotencyConflictError(
+                "payment idempotency key was reused with a different request"
+            )
+        return _payment_initiation_result(existing)
+
+    try:
+        sale = Sale.objects.select_for_update().get(id=sale_id)
+    except Sale.DoesNotExist as exc:
+        raise SaleNotFoundError("sale was not found") from exc
+
+    if sale.status != Sale.Status.PENDING_PAYMENT:
+        raise InvalidSaleStateError(
+            f"sale cannot accept payment in status {sale.status}"
+        )
+
+    provider_reference = _stable_provider_reference(
+        provider.name,
+        idempotency_key,
+        sale.id,
+    )
+
+    try:
+        intent: PaymentIntent = provider.initiate_payment(
+            amount_minor=sale.total_minor,
+            currency=sale.currency,
+            reference=provider_reference,
+            customer_email=customer_email.strip(),
+        )
+    except PaymentProviderError:
+        raise
+
+    if intent.provider != provider.name:
+        raise PaymentProviderError("provider returned an unexpected provider name")
+
+    if intent.provider_reference != provider_reference:
+        raise PaymentProviderError("provider returned an unexpected transaction reference")
+
+    if intent.amount_minor != sale.total_minor:
+        raise PaymentProviderError("provider returned an unexpected transaction amount")
+
+    if intent.currency.upper() != sale.currency.upper():
+        raise PaymentProviderError("provider returned an unexpected transaction currency")
+
+    payment = Payment.objects.create(
+        sale=sale,
+        provider=provider.name,
+        provider_reference=intent.provider_reference,
+        idempotency_key=idempotency_key,
+        method=Payment.Method.EXTERNAL,
+        amount_minor=sale.total_minor,
+        currency=sale.currency,
+        status=Payment.Status.PENDING,
+        provider_metadata={
+            "checkout_url": intent.checkout_url,
+            "access_code": intent.access_code,
+            "customer_email": customer_email.strip(),
+        },
+    )
+
+    AuditEvent.objects.create(
+        actor="system",
+        action="payment.initiated",
+        entity_type="Payment",
+        entity_reference=str(payment.id),
+        metadata={
+            "sale_id": sale.id,
+            "provider": provider.name,
+            "provider_reference": payment.provider_reference,
+            "amount_minor": payment.amount_minor,
+            "currency": payment.currency,
+        },
+    )
+
+    return _payment_initiation_result(payment)
 
 
 @transaction.atomic
