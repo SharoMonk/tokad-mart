@@ -2,9 +2,9 @@ import json
 import logging
 
 from django.http import JsonResponse
-from django.views.decorators.http import require_POST
+
 from rest_framework.authentication import BasicAuthentication, SessionAuthentication
-from rest_framework.decorators import authentication_classes, permission_classes
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import IsAuthenticated
 
 from .exceptions import (
@@ -26,7 +26,7 @@ def health(_request):
     return JsonResponse({"status": "ok", "service": "transactional"})
 
 
-@require_POST
+@api_view(["POST"])
 @authentication_classes([BasicAuthentication, SessionAuthentication])
 @permission_classes([IsAuthenticated, IsPOSOperator])
 def pos_cash_sale(request):

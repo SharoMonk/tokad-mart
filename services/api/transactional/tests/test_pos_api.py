@@ -1,6 +1,7 @@
 import json
 
 import pytest
+from django.contrib.auth import get_user_model
 from django.test import Client
 
 from transactional.models import (
@@ -30,10 +31,23 @@ def make_product(*, quantity=5):
 
     return product
 
+def authenticated_pos_client():
+    user_model = get_user_model()
+
+    user = user_model.objects.create_user(
+        username="pos-operator",
+        password="test-password",
+        is_staff=True,
+    )
+
+    client = Client()
+    client.force_login(user)
+
+    return client
 
 @pytest.mark.django_db
 def test_pos_cash_sale_endpoint_completes_sale():
-    client = Client()
+    client = authenticated_pos_client()
     product = make_product()
 
     response = client.post(
@@ -78,7 +92,7 @@ def test_pos_cash_sale_endpoint_completes_sale():
 
 @pytest.mark.django_db
 def test_pos_cash_sale_endpoint_retry_is_idempotent():
-    client = Client()
+    client = authenticated_pos_client()
     product = make_product()
 
     payload = {
@@ -122,7 +136,7 @@ def test_pos_cash_sale_endpoint_retry_is_idempotent():
 
 @pytest.mark.django_db
 def test_pos_cash_sale_endpoint_rejects_missing_fields():
-    client = Client()
+    client = authenticated_pos_client()
 
     response = client.post(
         "/api/transactional/pos/sales/",
@@ -143,7 +157,7 @@ def test_pos_cash_sale_endpoint_rejects_missing_fields():
 
 @pytest.mark.django_db
 def test_pos_cash_sale_endpoint_rejects_invalid_json():
-    client = Client()
+    client = authenticated_pos_client()
 
     response = client.post(
         "/api/transactional/pos/sales/",
@@ -158,7 +172,7 @@ def test_pos_cash_sale_endpoint_rejects_invalid_json():
 
 @pytest.mark.django_db
 def test_pos_cash_sale_endpoint_rejects_amount_mismatch():
-    client = Client()
+    client = authenticated_pos_client()
     product = make_product()
 
     response = client.post(
@@ -190,7 +204,7 @@ def test_pos_cash_sale_endpoint_rejects_amount_mismatch():
     assert Payment.objects.count() == 0
     assert InventoryMovement.objects.count() == 0
     assert InventoryItem.objects.get(product=product).quantity == 5
-    
+
 from unittest.mock import patch
 
 from django.test import Client
@@ -198,7 +212,7 @@ from django.test import Client
 
 @pytest.mark.django_db
 def test_pos_cash_sale_endpoint_returns_404_for_missing_product():
-    client = Client()
+    client = authenticated_pos_client()
 
     response = client.post(
         "/api/transactional/pos/sales/",
@@ -227,7 +241,7 @@ def test_pos_cash_sale_endpoint_returns_404_for_missing_product():
 
 @pytest.mark.django_db
 def test_pos_cash_sale_endpoint_returns_409_for_insufficient_stock():
-    client = Client()
+    client = authenticated_pos_client()
     product = make_product(quantity=1)
 
     response = client.post(
@@ -261,7 +275,7 @@ def test_pos_cash_sale_endpoint_returns_409_for_insufficient_stock():
 
 @pytest.mark.django_db
 def test_pos_cash_sale_endpoint_returns_500_for_unexpected_failure():
-    client = Client()
+    client = authenticated_pos_client()
     product = make_product()
 
     with patch(
@@ -294,3 +308,71 @@ def test_pos_cash_sale_endpoint_returns_500_for_unexpected_failure():
         "error": "internal_error",
         "message": "POS sale could not be completed",
     }
+
+@pytest.mark.django_db
+def test_pos_cash_sale_requires_authentication():
+    client = Client()
+
+    response = client.post(
+        "/api/transactional/pos/sales/",
+        data="{}",
+        content_type="application/json",
+    )
+
+    assert response.status_code in {401, 403}
+
+@pytest.mark.django_db
+def test_authenticated_non_staff_user_cannot_use_pos():
+    user_model = get_user_model()
+    user = user_model.objects.create_user(
+        username="cashier",
+        password="test-password",
+    )
+
+    client = Client()
+    client.force_login(user)
+
+    response = client.post(
+        "/api/transactional/pos/sales/",
+        data="{}",
+        content_type="application/json",
+    )
+
+    assert response.status_code == 403
+
+@pytest.mark.django_db
+def test_staff_user_can_use_pos():
+    user_model = get_user_model()
+    user = user_model.objects.create_user(
+        username="pos-operator",
+        password="test-password",
+        is_staff=True,
+    )
+
+    product = make_product()
+
+    client = Client()
+    client.force_login(user)
+
+    response = client.post(
+        "/api/transactional/pos/sales/",
+        data=json.dumps(
+            {
+                "lines": [
+                    {
+                        "product_id": product.id,
+                        "quantity": 1,
+                    }
+                ],
+                "location_code": "MAIN",
+                "currency": "NGN",
+                "amount_minor": 1000,
+                "sale_idempotency_key": "auth-sale-001",
+                "payment_idempotency_key": "auth-payment-001",
+                "provider_reference": "AUTH-POS-001",
+            }
+        ),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 201
