@@ -1,5 +1,4 @@
 import pytest
-from django.contrib.auth import get_user_model
 
 from transactional.exceptions import PaymentNotFoundError
 from transactional.models import (
@@ -7,11 +6,6 @@ from transactional.models import (
     InventoryMovement,
     Payment,
     PaymentWebhookEvent,
-    POSLocation,
-    POSOperator,
-    POSOperatorLocation,
-    POSOperatorTerminal,
-    POSTerminal,
     Product,
     Sale,
 )
@@ -20,10 +14,7 @@ from transactional.payment_providers import (
     VerifiedPayment,
     validate_verified_payment,
 )
-from transactional.payment_services import (
-    create_pending_sale,
-    record_successful_payment,
-)
+from transactional.payment_services import create_pending_sale
 from transactional.payment_webhooks import (
     PaymentWebhookError,
     process_payment_webhook,
@@ -52,14 +43,15 @@ def payment_setup(db):
         idempotency_key="webhook-sale-001",
     )
 
-    payment = record_successful_payment(
+    payment = Payment.objects.create(
         sale_id=sale.sale_id,
-        amount_minor=1000,
-        currency="NGN",
-        method=Payment.Method.EXTERNAL,
         provider="TEST",
         provider_reference="TEST-PAY-001",
         idempotency_key="webhook-payment-001",
+        method=Payment.Method.EXTERNAL,
+        amount_minor=1000,
+        currency="NGN",
+        status=Payment.Status.PENDING,
     )
 
     return product, sale, payment
@@ -100,12 +92,6 @@ def test_validate_verified_payment_rejects_failed_payment():
 def test_process_payment_webhook_is_idempotent(payment_setup):
     product, sale, payment = payment_setup
 
-    # The helper above records the payment as SUCCEEDED. Reset it to the
-    # state expected for provider confirmation.
-    Payment.objects.filter(pk=payment.payment_id).update(
-        status=Payment.Status.PENDING,
-    )
-
     verified = VerifiedPayment(
         provider="TEST",
         provider_reference="TEST-PAY-001",
@@ -129,11 +115,40 @@ def test_process_payment_webhook_is_idempotent(payment_setup):
 
     assert first.already_processed is False
     assert second.already_processed is True
-    assert first.payment_id == second.payment_id == payment.payment_id
-    assert Payment.objects.get(pk=payment.payment_id).status == Payment.Status.SUCCEEDED
+    assert first.payment_id == second.payment_id == payment.id
+    assert Payment.objects.get(pk=payment.id).status == Payment.Status.SUCCEEDED
     assert Sale.objects.get(pk=sale.sale_id).status == Sale.Status.COMPLETED
     assert InventoryItem.objects.get(product=product).quantity == 4
     assert InventoryMovement.objects.count() == 1
+    assert PaymentWebhookEvent.objects.count() == 1
+
+
+@pytest.mark.django_db
+def test_process_payment_webhook_accepts_new_event_for_already_succeeded_payment(
+    payment_setup,
+):
+    product, sale, payment = payment_setup
+    Payment.objects.filter(pk=payment.id).update(status=Payment.Status.SUCCEEDED)
+
+    verified = VerifiedPayment(
+        provider="TEST",
+        provider_reference="TEST-PAY-001",
+        amount_minor=1000,
+        currency="NGN",
+        succeeded=True,
+    )
+
+    result = process_payment_webhook(
+        provider="TEST",
+        event_id="evt-after-success",
+        provider_reference="TEST-PAY-001",
+        verified=verified,
+    )
+
+    assert result.already_processed is False
+    assert result.payment_status == Payment.Status.SUCCEEDED
+    assert result.sale_status == Sale.Status.PENDING_PAYMENT
+    assert InventoryItem.objects.get(product=product).quantity == 5
     assert PaymentWebhookEvent.objects.count() == 1
 
 
@@ -159,7 +174,6 @@ def test_process_payment_webhook_rejects_unknown_payment():
 @pytest.mark.django_db
 def test_process_payment_webhook_rejects_provider_reference_mismatch(payment_setup):
     _, _, payment = payment_setup
-    Payment.objects.filter(pk=payment.payment_id).update(status=Payment.Status.PENDING)
 
     verified = VerifiedPayment(
         provider="TEST",
@@ -177,11 +191,13 @@ def test_process_payment_webhook_rejects_provider_reference_mismatch(payment_set
             verified=verified,
         )
 
+    assert Payment.objects.get(pk=payment.id).status == Payment.Status.PENDING
+    assert PaymentWebhookEvent.objects.count() == 0
+
 
 @pytest.mark.django_db
 def test_process_payment_webhook_rejects_amount_mismatch(payment_setup):
     _, _, payment = payment_setup
-    Payment.objects.filter(pk=payment.payment_id).update(status=Payment.Status.PENDING)
 
     verified = VerifiedPayment(
         provider="TEST",
@@ -199,15 +215,19 @@ def test_process_payment_webhook_rejects_amount_mismatch(payment_setup):
             verified=verified,
         )
 
+    assert Payment.objects.get(pk=payment.id).status == Payment.Status.PENDING
+    assert PaymentWebhookEvent.objects.count() == 0
+
 
 @pytest.mark.django_db
 def test_process_payment_webhook_rejects_terminal_payment_state(payment_setup):
-    _, sale, payment = payment_setup
+    _, _, payment = payment_setup
+    Payment.objects.filter(pk=payment.id).update(status=Payment.Status.FAILED)
 
-    with pytest.raises(PaymentWebhookError, match="SUCCEEDED"):
+    with pytest.raises(PaymentWebhookError, match="FAILED"):
         process_payment_webhook(
             provider="TEST",
-            event_id="evt-completed",
+            event_id="evt-terminal-state",
             provider_reference="TEST-PAY-001",
             verified=VerifiedPayment(
                 provider="TEST",
@@ -218,6 +238,5 @@ def test_process_payment_webhook_rejects_terminal_payment_state(payment_setup):
             ),
         )
 
-    assert Payment.objects.get(pk=payment.payment_id).status == Payment.Status.SUCCEEDED
-    assert Sale.objects.get(pk=sale.sale_id).status == Sale.Status.PENDING_PAYMENT
+    assert Payment.objects.get(pk=payment.id).status == Payment.Status.FAILED
     assert PaymentWebhookEvent.objects.count() == 0
