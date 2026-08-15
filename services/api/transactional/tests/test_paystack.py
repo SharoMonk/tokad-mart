@@ -21,7 +21,7 @@ from transactional.models import (
     Sale,
     SaleLine,
 )
-from transactional.payment_providers import PaymentIntent, PaymentProviderError, VerifiedPayment
+from transactional.payment_providers import PaymentIntent, VerifiedPayment
 from transactional.payment_services import create_pending_sale, initialize_external_payment
 from transactional.providers.paystack import PaystackProvider
 from transactional.services import CheckoutLine
@@ -95,6 +95,13 @@ def pending_external_payment():
     )
 
     return product, sale
+
+
+def expected_provider_reference(*, sale_id: int, idempotency_key: str) -> str:
+    digest = hashlib.sha256(
+        f"PAYSTACK:{idempotency_key}:{sale_id}".encode("utf-8")
+    ).hexdigest()[:24]
+    return f"TK-{sale_id}-{digest}"
 
 
 def test_paystack_initiate_payment_parses_response(paystack_provider):
@@ -264,6 +271,11 @@ def test_paystack_payment_initiation_endpoint_returns_checkout_data(
     user, _, _ = pos_operator
     _, sale = pending_external_payment
     monkeypatch.setenv("PAYSTACK_SECRET_KEY", "sk_test_example")
+    idempotency_key = "api-paystack-init-001"
+    provider_reference = expected_provider_reference(
+        sale_id=sale.sale_id,
+        idempotency_key=idempotency_key,
+    )
 
     response_payload = {
         "status": True,
@@ -271,7 +283,7 @@ def test_paystack_payment_initiation_endpoint_returns_checkout_data(
         "data": {
             "authorization_url": "https://checkout.paystack.com/example",
             "access_code": "example",
-            "reference": "TK-1-ref",
+            "reference": provider_reference,
         },
     }
 
@@ -287,7 +299,7 @@ def test_paystack_payment_initiation_endpoint_returns_checkout_data(
                 {
                     "sale_id": sale.sale_id,
                     "customer_email": "customer@example.com",
-                    "idempotency_key": "api-paystack-init-001",
+                    "idempotency_key": idempotency_key,
                     "location_code": "MAIN",
                     "terminal_code": "MAIN-01",
                 }
@@ -299,6 +311,7 @@ def test_paystack_payment_initiation_endpoint_returns_checkout_data(
     payload = response.json()
 
     assert payload["provider"] == "PAYSTACK"
+    assert payload["provider_reference"] == provider_reference
     assert payload["sale_id"] == sale.sale_id
     assert payload["amount_minor"] == 5000
     assert payload["status"] == Payment.Status.PENDING
@@ -308,9 +321,7 @@ def test_paystack_payment_initiation_endpoint_returns_checkout_data(
 
 
 @pytest.mark.django_db
-def test_paystack_webhook_endpoint_rejects_invalid_signature(
-    monkeypatch,
-):
+def test_paystack_webhook_endpoint_rejects_invalid_signature(monkeypatch):
     monkeypatch.setenv("PAYSTACK_SECRET_KEY", "sk_test_example")
 
     body = json.dumps(
@@ -392,9 +403,7 @@ def test_paystack_webhook_endpoint_completes_pending_payment(
 
 
 @pytest.mark.django_db
-def test_paystack_webhook_endpoint_allows_only_charge_success_event(
-    monkeypatch,
-):
+def test_paystack_webhook_endpoint_allows_only_charge_success_event(monkeypatch):
     monkeypatch.setenv("PAYSTACK_SECRET_KEY", "sk_test_example")
     payload = {"event": "transfer.failed", "data": {}}
     body = json.dumps(payload).encode()
