@@ -5,7 +5,11 @@ import logging
 from django.http import JsonResponse
 
 from rest_framework.authentication import BasicAuthentication, SessionAuthentication
-from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from rest_framework.decorators import (
+    api_view,
+    authentication_classes,
+    permission_classes,
+)
 from rest_framework.permissions import IsAuthenticated
 
 from .exceptions import (
@@ -19,10 +23,7 @@ from .exceptions import (
 )
 from .models import Sale
 from .payment_providers import PaymentProviderError, VerifiedPayment
-from .payment_services import (
-    initialize_external_payment,
-    process_pos_cash_sale,
-)
+from .payment_services import initialize_external_payment, process_pos_cash_sale
 from .payment_webhooks import PaymentWebhookError, process_payment_webhook
 from .permissions import IsPOSOperator
 from .pos_access import POSAccessError, authorize_pos_scope
@@ -304,6 +305,8 @@ def initiate_paystack_payment(request):
 
 
 @api_view(["POST"])
+@authentication_classes([])
+@permission_classes([])
 def paystack_webhook(request):
     raw_body = request.body
     signature = request.headers.get("x-paystack-signature", "")
@@ -385,6 +388,7 @@ def paystack_webhook(request):
                 currency=str(data.get("currency") or "").upper(),
                 succeeded=str(data.get("status")) == "success",
             ),
+            payload=payload,
         )
     except PaymentNotFoundError as exc:
         return JsonResponse(
