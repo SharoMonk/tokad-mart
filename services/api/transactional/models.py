@@ -128,6 +128,7 @@ class Payment(models.Model):
     amount_minor = models.PositiveBigIntegerField()
     currency = models.CharField(max_length=3)
     status = models.CharField(max_length=32, choices=Status.choices, default=Status.PENDING)
+    provider_metadata = models.JSONField(default=dict)
     created_at = models.DateTimeField(auto_now_add=True)
 
 
