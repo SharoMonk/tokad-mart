@@ -5,6 +5,8 @@ from .views import (
     initiate_paystack_payment,
     paystack_webhook,
     pos_cash_sale,
+    reconcile_payment_endpoint,
+    refund_payment,
 )
 
 
@@ -23,6 +25,16 @@ urlpatterns = [
         "payments/paystack/initialize/",
         initiate_paystack_payment,
         name="paystack-payment-initiate",
+    ),
+    path(
+        "payments/refund/",
+        refund_payment,
+        name="payment-refund",
+    ),
+    path(
+        "payments/reconcile/",
+        reconcile_payment_endpoint,
+        name="payment-reconcile",
     ),
     path(
         "webhooks/paystack/",
