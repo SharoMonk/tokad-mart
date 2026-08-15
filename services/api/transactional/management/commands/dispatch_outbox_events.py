@@ -1,6 +1,8 @@
 from django.core.management.base import BaseCommand
 
 from transactional.outbox_dispatcher import dispatch_outbox_events
+from transactional.payment_initiation import PAYMENT_INITIATION_REQUESTED_EVENT
+from transactional.payment_initiation_outbox import make_payment_initiation_outbox_handler
 from transactional.payment_outbox import REFUND_REQUESTED_EVENT, make_refund_outbox_handler
 from transactional.providers.paystack import PaystackProvider
 
@@ -13,9 +15,11 @@ class Command(BaseCommand):
         parser.add_argument("--lease-seconds", type=int, default=60)
 
     def handle(self, *args, **options):
+        provider = PaystackProvider()
         result = dispatch_outbox_events(
             {
-                REFUND_REQUESTED_EVENT: make_refund_outbox_handler(PaystackProvider()),
+                REFUND_REQUESTED_EVENT: make_refund_outbox_handler(provider),
+                PAYMENT_INITIATION_REQUESTED_EVENT: make_payment_initiation_outbox_handler(provider),
             },
             limit=options["limit"],
             lease_seconds=options["lease_seconds"],
