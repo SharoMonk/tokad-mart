@@ -1,9 +1,10 @@
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
 from transactional.outbox_dispatcher import dispatch_outbox_events
 from transactional.payment_initiation import PAYMENT_INITIATION_REQUESTED_EVENT
 from transactional.payment_initiation_outbox import make_payment_initiation_outbox_handler
 from transactional.payment_outbox import REFUND_REQUESTED_EVENT, make_refund_outbox_handler
+from transactional.payment_providers import PaymentProviderError
 from transactional.providers.paystack import PaystackProvider
 
 
@@ -15,7 +16,14 @@ class Command(BaseCommand):
         parser.add_argument("--lease-seconds", type=int, default=60)
 
     def handle(self, *args, **options):
-        provider = PaystackProvider()
+        try:
+            provider = PaystackProvider()
+        except PaymentProviderError as exc:
+            raise CommandError(
+                f"outbox dispatch is blocked by provider configuration: {exc}. "
+                "No outbox events were claimed; retry after configuring the provider."
+            ) from exc
+
         result = dispatch_outbox_events(
             {
                 REFUND_REQUESTED_EVENT: make_refund_outbox_handler(provider),
