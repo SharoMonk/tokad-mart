@@ -1,13 +1,16 @@
 from datetime import timedelta
 import threading
+from unittest.mock import patch
 
 import pytest
+from django.core.management import call_command, CommandError
 from django.db import close_old_connections, transaction
 from django.utils import timezone
 
 from transactional.models import OutboxEvent
 from transactional.outbox import OutboxIdempotencyConflict, enqueue_outbox_event
 from transactional.outbox_dispatcher import dispatch_outbox_events
+from transactional.payment_providers import PaymentProviderError
 
 
 def make_event(*, key="outbox-001", event_type="payment.test", payload=None):
@@ -171,3 +174,22 @@ def test_concurrent_dispatchers_claim_event_once():
     assert not errors
     assert processed == [OutboxEvent.objects.get().id]
     assert OutboxEvent.objects.get().attempts == 1
+
+
+@pytest.mark.django_db
+
+def test_dispatch_command_surfaces_missing_provider_configuration_without_claiming_events():
+    event = make_event(event_type="payment.test", key="outbox-provider-config-001")
+
+    with patch(
+        "transactional.management.commands.dispatch_outbox_events.PaystackProvider",
+        side_effect=PaymentProviderError("PAYSTACK_SECRET_KEY is not configured"),
+    ):
+        with pytest.raises(CommandError, match="No outbox events were claimed"):
+            call_command("dispatch_outbox_events")
+
+    event.refresh_from_db()
+
+    assert event.status == OutboxEvent.Status.PENDING
+    assert event.attempts == 0
+    assert event.locked_until is None
