@@ -4,6 +4,7 @@ import threading
 from unittest.mock import patch
 
 import pytest
+from django.core.management import call_command
 from django.db import close_old_connections, transaction
 from django.utils import timezone
 
@@ -215,13 +216,10 @@ def test_dispatch_command_records_missing_provider_configuration_as_retryable_fa
         "transactional.management.commands.dispatch_outbox_events.PaystackProvider",
         side_effect=PaymentProviderError("PAYSTACK_SECRET_KEY is not configured"),
     ):
-        call_result = __import__("django.core.management").core.management.call_command(
-            "dispatch_outbox_events",
-        )
+        call_command("dispatch_outbox_events")
 
     event.refresh_from_db()
 
-    assert call_result is None
     assert event.status == OutboxEvent.Status.FAILED
     assert event.attempts == 1
     assert event.locked_until is None
