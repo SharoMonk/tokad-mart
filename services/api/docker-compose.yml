@@ -22,5 +22,52 @@ services:
       retries: 10
       start_period: 10s
 
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.outbox-worker
+    container_name: tokad-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${API_PORT:-8000}:8000"
+    command:
+      [
+        "runserver",
+        "0.0.0.0:8000",
+      ]
+
+  outbox-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.outbox-worker
+    container_name: tokad-outbox-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      [
+        "run_outbox_worker",
+        "--poll-interval",
+        "2",
+        "--limit",
+        "20",
+        "--lease-seconds",
+        "60",
+      ]
+
 volumes:
   tokad_postgres_data:
