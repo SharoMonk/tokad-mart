@@ -1,32 +1,43 @@
 # Local PostgreSQL in Docker
 
-This setup moves the local Tokad Mart PostgreSQL service from a host systemd installation to Docker while keeping the Django API on the host machine.
+This setup runs the local Tokad Mart PostgreSQL service in Docker and supports running the Django API and transactional outbox worker in the same Compose network.
 
 ## Runtime model
 
 ```text
-Django API (host)
-       |
-       | localhost:5432
-       v
-PostgreSQL 18.4 (Docker)
-       |
-       v
-Named volume: tokad_postgres_data
+                         Compose network
+              ┌───────────────────────────────┐
+              │                               │
+              │  API ───────────────┐         │
+              │                     │         │
+              │  Outbox worker ─────┼──> postgres:5432
+              │                     │         │
+              │  PostgreSQL 18.4 <──┘         │
+              │       │                       │
+              │       v                       │
+              │  tokad_postgres_data          │
+              └───────────────────────────────┘
+                         │
+                         │ published port
+                         v
+                    host :5432
 ```
 
-The API keeps using:
+The host-side Django process can continue using:
 
 ```dotenv
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
 ```
 
-When the API and worker are later placed in the same Compose project, switch their database host to the Compose service name:
+Containers in the Compose project use the service hostname automatically:
 
 ```dotenv
 POSTGRES_HOST=postgres
+POSTGRES_PORT=5432
 ```
+
+The Compose configuration overrides those two variables for the `api` and `outbox-worker` services, so the same `.env` file can be used by both host-side development and containerized services.
 
 ## Start the database
 
@@ -50,6 +61,40 @@ docker inspect --format='{{.State.Health.Status}}' tokad-postgres
 
 The PostgreSQL container uses the named volume `tokad_postgres_data` mounted at `/var/lib/postgresql`. PostgreSQL 18 and newer official images use that mount point and a version-specific `PGDATA` under it. See the official image documentation before changing the PostgreSQL major version. (https://hub.docker.com/_/postgres)
 
+## Start API, worker, and database together
+
+From `services/api`:
+
+```bash
+docker compose up -d postgres api outbox-worker
+```
+
+The API is exposed on host port `8000` by default:
+
+```text
+http://127.0.0.1:8000
+```
+
+The outbox worker connects to PostgreSQL through the Compose network rather than using host networking.
+
+Inspect all services:
+
+```bash
+docker compose ps
+```
+
+Follow worker logs:
+
+```bash
+docker compose logs -f outbox-worker
+```
+
+Follow API logs:
+
+```bash
+docker compose logs -f api
+```
+
 ## First-time initialization
 
 The official image initializes the database using:
@@ -70,18 +115,24 @@ With PostgreSQL healthy:
 uv run python manage.py migrate
 ```
 
-Then verify:
+Or, against the containerized API, run migrations from the API image:
+
+```bash
+docker compose run --rm api python manage.py migrate
+```
+
+Then verify locally:
 
 ```bash
 uv run python manage.py check
 uv run pytest -q transactional/
 ```
 
-## Moving existing host data
+## Moving existing data
 
-Do not delete the existing host PostgreSQL database before taking a backup.
+Do not delete an existing PostgreSQL database before taking a backup.
 
-Create a logical dump from the old host database first:
+For a pre-Docker host database, create a logical dump first:
 
 ```bash
 pg_dump \
@@ -93,13 +144,9 @@ pg_dump \
   tokad_mart
 ```
 
-Start the Docker database:
+For an existing Docker PostgreSQL container/volume, inspect and preserve the volume before removing the old container. Do not use `docker rm -v` unless the database data has been backed up and the volume is intentionally disposable.
 
-```bash
-docker compose up -d postgres
-```
-
-After the container is healthy, restore the dump into the Docker database. Example:
+After the Docker database is healthy, a logical dump can be restored through the published host port:
 
 ```bash
 pg_restore \
@@ -111,8 +158,6 @@ pg_restore \
   --if-exists \
   tokad_mart_before_docker.dump
 ```
-
-For a fresh development database, it is simpler to let Django migrations create the schema instead of restoring old data.
 
 ## Persistence
 
@@ -146,4 +191,10 @@ PGPASSWORD="$POSTGRES_PASSWORD" psql \
   -c 'select version();'
 ```
 
-From another container on the Compose network later, use `postgres:5432` rather than `localhost:5432`.
+From the API or outbox worker container, use:
+
+```text
+postgres:5432
+```
+
+not `localhost:5432`.
