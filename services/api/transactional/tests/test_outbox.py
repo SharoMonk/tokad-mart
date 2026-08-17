@@ -1,15 +1,16 @@
 from datetime import timedelta
+import logging
 import threading
 from unittest.mock import patch
 
 import pytest
-from django.core.management import call_command, CommandError
 from django.db import close_old_connections, transaction
 from django.utils import timezone
 
 from transactional.models import OutboxEvent
 from transactional.outbox import OutboxIdempotencyConflict, enqueue_outbox_event
 from transactional.outbox_dispatcher import dispatch_outbox_events
+from transactional.payment_initiation import PAYMENT_INITIATION_REQUESTED_EVENT
 from transactional.payment_providers import PaymentProviderError
 
 
@@ -178,18 +179,51 @@ def test_concurrent_dispatchers_claim_event_once():
 
 @pytest.mark.django_db
 
-def test_dispatch_command_surfaces_missing_provider_configuration_without_claiming_events():
-    event = make_event(event_type="payment.test", key="outbox-provider-config-001")
+def test_dispatcher_emits_structured_event_lifecycle_logs(caplog):
+    event = make_event()
+
+    with caplog.at_level(logging.INFO, logger="transactional.outbox_dispatcher"):
+        result = dispatch_outbox_events(
+            {"payment.test": lambda _event: None},
+        )
+
+    assert result.completed == 1
+    messages = [record.getMessage() for record in caplog.records]
+    assert "outbox dispatch started" in messages
+    assert "outbox event claimed" in messages
+    assert "outbox event completed" in messages
+    assert "outbox dispatch finished" in messages
+
+    claimed = next(
+        record for record in caplog.records
+        if record.getMessage() == "outbox event claimed"
+    )
+    assert claimed.event_id == event.id
+    assert claimed.event_type == "payment.test"
+    assert claimed.attempt == 1
+
+
+@pytest.mark.django_db
+
+def test_dispatch_command_records_missing_provider_configuration_as_retryable_failure():
+    event = make_event(
+        event_type=PAYMENT_INITIATION_REQUESTED_EVENT,
+        key="outbox-provider-config-001",
+    )
 
     with patch(
         "transactional.management.commands.dispatch_outbox_events.PaystackProvider",
         side_effect=PaymentProviderError("PAYSTACK_SECRET_KEY is not configured"),
     ):
-        with pytest.raises(CommandError, match="No outbox events were claimed"):
-            call_command("dispatch_outbox_events")
+        call_result = __import__("django.core.management").core.management.call_command(
+            "dispatch_outbox_events",
+        )
 
     event.refresh_from_db()
 
-    assert event.status == OutboxEvent.Status.PENDING
-    assert event.attempts == 0
+    assert call_result is None
+    assert event.status == OutboxEvent.Status.FAILED
+    assert event.attempts == 1
     assert event.locked_until is None
+    assert event.available_at > timezone.now()
+    assert "PAYSTACK_SECRET_KEY is not configured" in event.last_error
