@@ -71,3 +71,5 @@ services:
 
 volumes:
   tokad_postgres_data:
+    external: true
+    name: 96ef94fe89dfa55e9d61a05f4ecbbfe4cfd9e348f88659ca45e659363b011dc6
