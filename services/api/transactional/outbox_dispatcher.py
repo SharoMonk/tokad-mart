@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
+import logging
 from typing import Callable
 
 from django.db import transaction
@@ -10,6 +11,8 @@ from django.utils import timezone
 
 from .models import OutboxEvent
 from .outbox import retry_available_at
+
+logger = logging.getLogger(__name__)
 
 OutboxHandler = Callable[[OutboxEvent], None]
 
@@ -114,19 +117,45 @@ def dispatch_outbox_events(
     completed = failed = skipped = 0
     current = now or timezone.now()
 
+    logger.info(
+        "outbox dispatch started",
+        extra={
+            "limit": limit,
+            "lease_seconds": lease_seconds,
+        },
+    )
+
     for _ in range(limit):
         event = _claim_event(now=current, lease_seconds=lease_seconds)
         if event is None:
             break
 
+        logger.info(
+            "outbox event claimed",
+            extra={
+                "event_id": event.id,
+                "event_type": event.event_type,
+                "aggregate_type": event.aggregate_type,
+                "aggregate_id": event.aggregate_id,
+                "attempt": event.attempts,
+            },
+        )
+
         handler = handlers.get(event.event_type)
         if handler is None:
-            _mark_failed(
-                event.id,
-                RuntimeError(f"no handler registered for {event.event_type}"),
-                now=current,
+            error = RuntimeError(
+                f"no handler registered for {event.event_type}"
             )
+            _mark_failed(event.id, error, now=current)
             failed += 1
+            logger.error(
+                "outbox event failed: no handler",
+                extra={
+                    "event_id": event.id,
+                    "event_type": event.event_type,
+                    "attempt": event.attempts,
+                },
+            )
             continue
 
         try:
@@ -134,12 +163,43 @@ def dispatch_outbox_events(
         except Exception as exc:
             _mark_failed(event.id, exc, now=current)
             failed += 1
+            logger.exception(
+                "outbox event failed",
+                extra={
+                    "event_id": event.id,
+                    "event_type": event.event_type,
+                    "aggregate_type": event.aggregate_type,
+                    "aggregate_id": event.aggregate_id,
+                    "attempt": event.attempts,
+                },
+            )
         else:
             _mark_completed(event.id, now=timezone.now())
             completed += 1
+            logger.info(
+                "outbox event completed",
+                extra={
+                    "event_id": event.id,
+                    "event_type": event.event_type,
+                    "aggregate_type": event.aggregate_type,
+                    "aggregate_id": event.aggregate_id,
+                    "attempt": event.attempts,
+                },
+            )
 
-    return DispatchResult(
+    result = DispatchResult(
         completed=completed,
         failed=failed,
         skipped=skipped,
     )
+
+    logger.info(
+        "outbox dispatch finished",
+        extra={
+            "completed": result.completed,
+            "failed": result.failed,
+            "skipped": result.skipped,
+        },
+    )
+
+    return result
