@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 def repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    return Path(__file__).resolve().parents[2]
 
 
 def test_worker_dockerfile_has_frozen_runtime_and_sigterm():
