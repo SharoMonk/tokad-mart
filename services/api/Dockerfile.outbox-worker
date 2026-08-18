@@ -18,5 +18,8 @@ COPY . .
 
 STOPSIGNAL SIGTERM
 
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
+    CMD python manage.py check_outbox_health --strict || exit 1
+
 ENTRYPOINT ["uv", "run", "--frozen", "python", "manage.py"]
 CMD ["run_outbox_worker", "--poll-interval", "2", "--limit", "20", "--lease-seconds", "60"]
