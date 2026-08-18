@@ -30,7 +30,7 @@ docker run --rm \
   tokad-mart-outbox-worker
 ```
 
-The image uses `SIGTERM` for shutdown. The worker handles `SIGTERM` and `SIGINT` and exits cleanly.
+The image uses `SIGTERM` for shutdown. The worker handles `SIGTERM` and `SIGINT` and exits cleanly. The image also exposes a Docker `HEALTHCHECK` that runs `check_outbox_health --strict` against the configured database.
 
 ## systemd
 
@@ -99,7 +99,38 @@ For manual recovery or debugging, run one cycle instead of starting a long-lived
 uv run python manage.py run_outbox_worker --once
 ```
 
-The worker logs lifecycle events to the normal application logger. The dispatcher records event type, aggregate identifiers, attempt number, and completion/failure counters without logging payment secrets or full event payloads.
+## Health and observability
+
+The worker exposes an operational health snapshot through:
+
+```bash
+uv run python manage.py check_outbox_health
+```
+
+The command reports:
+
+```text
+queue_depth
+pending_ready
+retryable_ready
+processing
+stale_processing
+oldest_ready_at
+oldest_ready_age_seconds
+database_reachable
+ready
+healthy
+```
+
+Use strict mode for container or service supervision:
+
+```bash
+uv run python manage.py check_outbox_health --strict
+```
+
+Strict mode exits non-zero when the database is unreachable or stale processing work is detected. A non-empty retryable queue is observable through the snapshot without making the worker itself unready.
+
+The continuous worker emits a structured heartbeat after every dispatch cycle containing cycle counters, cumulative completion/failure counts, queue depth, retryable work, stale leases, oldest ready age, database reachability, and overall health. Logs must not include payment secrets or full event payloads.
 
 ## Release checklist
 
