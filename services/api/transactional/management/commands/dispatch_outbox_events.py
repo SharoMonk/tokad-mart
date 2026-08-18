@@ -2,7 +2,7 @@ import logging
 
 from django.core.management.base import BaseCommand, CommandError
 
-from transactional.outbox_dispatcher import dispatch_outbox_events
+from transactional.outbox_dispatcher import DispatchResult, dispatch_outbox_events
 from transactional.payment_initiation import PAYMENT_INITIATION_REQUESTED_EVENT
 from transactional.payment_initiation_outbox import make_payment_initiation_outbox_handler
 from transactional.payment_outbox import REFUND_REQUESTED_EVENT, make_refund_outbox_handler
@@ -19,7 +19,7 @@ class Command(BaseCommand):
         parser.add_argument("--limit", type=int, default=10)
         parser.add_argument("--lease-seconds", type=int, default=60)
 
-    def handle(self, *args, **options):
+    def handle(self, *args, **options) -> DispatchResult:
         result = dispatch_outbox_events(
             {
                 REFUND_REQUESTED_EVENT: self._make_refund_handler,
@@ -43,6 +43,7 @@ class Command(BaseCommand):
                 f"completed={result.completed} failed={result.failed} skipped={result.skipped}"
             )
         )
+        return result
 
     @staticmethod
     def _provider():
