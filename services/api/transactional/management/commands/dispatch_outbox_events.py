@@ -19,12 +19,8 @@ class Command(BaseCommand):
         parser.add_argument("--limit", type=int, default=10)
         parser.add_argument("--lease-seconds", type=int, default=60)
 
-    def handle(self, *args, **options) -> DispatchResult:
-        result = dispatch_outbox_events(
-            {
-                REFUND_REQUESTED_EVENT: self._make_refund_handler,
-                PAYMENT_INITIATION_REQUESTED_EVENT: self._make_payment_initiation_handler,
-            },
+    def handle(self, *args, **options) -> None:
+        result = dispatch(
             limit=options["limit"],
             lease_seconds=options["lease_seconds"],
         )
@@ -43,7 +39,6 @@ class Command(BaseCommand):
                 f"completed={result.completed} failed={result.failed} skipped={result.skipped}"
             )
         )
-        return result
 
     @staticmethod
     def _provider():
@@ -51,8 +46,8 @@ class Command(BaseCommand):
             return PaystackProvider()
         except PaymentProviderError as exc:
             raise CommandError(
-                f"outbox dispatch is blocked by provider configuration: {exc}. "
-                "No outbox events were claimed; retry after configuring the provider."
+                f"outbox provider configuration is unavailable: {exc}. "
+                "The claimed event will be recorded as failed and retried after backoff."
             ) from exc
 
     @classmethod
@@ -62,3 +57,14 @@ class Command(BaseCommand):
     @classmethod
     def _make_payment_initiation_handler(cls, event):
         return make_payment_initiation_outbox_handler(cls._provider())(event)
+
+
+def dispatch(*, limit: int = 10, lease_seconds: int = 60) -> DispatchResult:
+    return dispatch_outbox_events(
+        {
+            REFUND_REQUESTED_EVENT: Command._make_refund_handler,
+            PAYMENT_INITIATION_REQUESTED_EVENT: Command._make_payment_initiation_handler,
+        },
+        limit=limit,
+        lease_seconds=lease_seconds,
+    )
