@@ -18,7 +18,7 @@ def make_event(*, status, created_at, available_at=None, locked_until=None):
         idempotency_key=f"health-{status}-{created_at.timestamp()}-{now.timestamp()}",
         payload={},
         status=status,
-        available_at=available_at or now,
+        available_at=available_at or created_at,
         locked_until=locked_until,
     )
     OutboxEvent.objects.filter(pk=event.pk).update(created_at=created_at)
