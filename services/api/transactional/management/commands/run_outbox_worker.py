@@ -4,7 +4,7 @@ import time
 
 from django.core.management.base import BaseCommand, CommandError
 
-from transactional.management.commands.dispatch_outbox_events import Command as DispatchCommand
+from transactional.management.commands.dispatch_outbox_events import dispatch
 from transactional.outbox_health import get_outbox_health
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,6 @@ class Command(BaseCommand):
         signal.signal(signal.SIGTERM, request_shutdown)
         signal.signal(signal.SIGINT, request_shutdown)
 
-        dispatcher = DispatchCommand()
         self.stdout.write("outbox worker started")
         logger.info(
             "outbox worker started",
@@ -53,7 +52,7 @@ class Command(BaseCommand):
 
         try:
             while not stop:
-                result = dispatcher.handle(
+                result = dispatch(
                     limit=options["limit"],
                     lease_seconds=options["lease_seconds"],
                 )
