@@ -5,6 +5,7 @@ import time
 from django.core.management.base import BaseCommand, CommandError
 
 from transactional.management.commands.dispatch_outbox_events import Command as DispatchCommand
+from transactional.outbox_health import get_outbox_health
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,10 @@ class Command(BaseCommand):
             raise CommandError("poll_interval must be non-negative")
 
         stop = False
+        cycles = 0
+        cumulative_completed = 0
+        cumulative_failed = 0
+        cumulative_skipped = 0
 
         def request_shutdown(signum, _frame):
             nonlocal stop
@@ -48,9 +53,35 @@ class Command(BaseCommand):
 
         try:
             while not stop:
-                dispatcher.handle(
+                result = dispatcher.handle(
                     limit=options["limit"],
                     lease_seconds=options["lease_seconds"],
+                )
+                cycles += 1
+                cumulative_completed += result.completed
+                cumulative_failed += result.failed
+                cumulative_skipped += result.skipped
+
+                snapshot = get_outbox_health()
+                logger.info(
+                    "outbox worker heartbeat",
+                    extra={
+                        "cycle": cycles,
+                        "completed": result.completed,
+                        "failed": result.failed,
+                        "skipped": result.skipped,
+                        "cumulative_completed": cumulative_completed,
+                        "cumulative_failed": cumulative_failed,
+                        "cumulative_skipped": cumulative_skipped,
+                        "queue_depth": snapshot.queue_depth,
+                        "pending_ready": snapshot.pending_ready,
+                        "retryable_ready": snapshot.retryable_ready,
+                        "processing": snapshot.processing,
+                        "stale_processing": snapshot.stale_processing,
+                        "oldest_ready_age_seconds": snapshot.oldest_ready_age_seconds,
+                        "database_reachable": snapshot.database_reachable,
+                        "healthy": snapshot.healthy,
+                    },
                 )
 
                 if options["once"] or stop:
@@ -60,5 +91,13 @@ class Command(BaseCommand):
         finally:
             signal.signal(signal.SIGTERM, previous_sigterm)
             signal.signal(signal.SIGINT, previous_sigint)
-            logger.info("outbox worker stopped")
+            logger.info(
+                "outbox worker stopped",
+                extra={
+                    "cycles": cycles,
+                    "cumulative_completed": cumulative_completed,
+                    "cumulative_failed": cumulative_failed,
+                    "cumulative_skipped": cumulative_skipped,
+                },
+            )
             self.stdout.write("outbox worker stopped")
