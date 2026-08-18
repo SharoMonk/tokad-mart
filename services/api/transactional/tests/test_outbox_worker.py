@@ -1,3 +1,4 @@
+import logging
 from unittest.mock import patch
 
 import pytest
@@ -23,11 +24,13 @@ def test_run_outbox_worker_once_delegates_to_dispatcher(caplog):
         oldest_ready_at=None,
         oldest_ready_age_seconds=None,
     )
+    caplog.set_level(logging.INFO, logger="transactional.management.commands.run_outbox_worker")
+
     with (
         patch(
-            "transactional.management.commands.run_outbox_worker.DispatchCommand.handle",
+            "transactional.management.commands.run_outbox_worker.dispatch",
             return_value=DispatchResult(completed=2, failed=1, skipped=0),
-        ) as handle,
+        ) as dispatch,
         patch(
             "transactional.management.commands.run_outbox_worker.get_outbox_health",
             return_value=snapshot,
@@ -44,7 +47,7 @@ def test_run_outbox_worker_once_delegates_to_dispatcher(caplog):
             "0",
         )
 
-    handle.assert_called_once_with(
+    dispatch.assert_called_once_with(
         limit=7,
         lease_seconds=45,
     )
