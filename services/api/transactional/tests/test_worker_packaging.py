@@ -14,6 +14,8 @@ def test_worker_dockerfile_has_frozen_runtime_and_sigterm():
     assert "--poll-interval" in dockerfile
     assert "--limit" in dockerfile
     assert "--lease-seconds" in dockerfile
+    assert "HEALTHCHECK" in dockerfile
+    assert "check_outbox_health --strict" in dockerfile
 
 
 def test_worker_dockerignore_excludes_environment_and_virtualenv():
@@ -45,5 +47,6 @@ def test_deployment_guide_documents_both_runtime_modes():
 
     assert "dispatch_outbox_events" in guide
     assert "run_outbox_worker" in guide
+    assert "check_outbox_health" in guide
     assert "docker run" in guide
     assert "systemctl enable --now tokad-mart-outbox-worker" in guide
