@@ -127,7 +127,7 @@ class PaymentConcurrencyTests(TransactionTestCase):
         assert sorted(result.already_processed for result in results) == [False, True]
 
         payment.refresh_from_db()
-        sale.refresh_from_db()
+        sale = Sale.objects.get(pk=sale.sale_id)
 
         assert payment.status == Payment.Status.SUCCEEDED
         assert sale.status == Sale.Status.COMPLETED
