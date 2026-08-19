@@ -90,7 +90,10 @@ def request_refund(
     already_refunded = (
         PaymentRefund.objects.filter(
             payment=payment,
-            status=PaymentRefund.Status.SUCCEEDED,
+            status__in=[
+                PaymentRefund.Status.REQUESTED,
+                PaymentRefund.Status.SUCCEEDED,
+            ],
         ).aggregate(total=Sum("amount_minor"))["total"]
         or 0
     )
