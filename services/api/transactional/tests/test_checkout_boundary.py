@@ -13,8 +13,8 @@ from transactional.models import (
     Sale,
     SaleLine,
 )
-from transactional.payment_providers import PaymentProviderError
-from transactional.payment_services import process_pos_cash_sale, request_external_payment_initialization
+from transactional.payment_initiation import request_external_payment_initialization
+from transactional.payment_services import process_pos_cash_sale
 from transactional.services import CheckoutLine
 
 
