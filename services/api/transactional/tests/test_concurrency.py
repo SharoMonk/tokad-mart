@@ -5,12 +5,14 @@ from django.db import close_old_connections
 from django.test import TransactionTestCase
 
 from transactional.services import CheckoutError, CheckoutLine, checkout_sale
+from transactional.payment_services import process_pos_cash_sale
 
 from transactional.models import (
     AuditEvent,
     IdempotencyRecord,
     InventoryItem,
     InventoryMovement,
+    Payment,
     Product,
     Sale,
     SaleLine,
@@ -166,6 +168,123 @@ class CheckoutConcurrencyTests(TransactionTestCase):
         assert SaleLine.objects.count() == 1
         assert InventoryMovement.objects.count() == 1
         assert AuditEvent.objects.count() == 1
+        assert IdempotencyRecord.objects.count() == 1
+
+    def test_concurrent_full_cash_checkout_with_same_keys_returns_same_result(self):
+        product = Product.objects.create(
+            sku="SKU-CONCURRENT-CASH-001",
+            name="Concurrent Cash Product",
+            currency="NGN",
+            unit_price_minor=1000,
+        )
+        InventoryItem.objects.create(
+            product=product,
+            location_code="MAIN",
+            quantity=2,
+        )
+
+        barrier = threading.Barrier(2)
+        results = []
+        errors = []
+
+        def attempt():
+            close_old_connections()
+            try:
+                barrier.wait(timeout=10)
+                results.append(
+                    process_pos_cash_sale(
+                        lines=[CheckoutLine(product_id=product.id, quantity=1)],
+                        location_code="MAIN",
+                        currency="NGN",
+                        amount_minor=1000,
+                        sale_idempotency_key="concurrent-cash-sale-001",
+                        payment_idempotency_key="concurrent-cash-payment-001",
+                        provider_reference="CONCURRENT-CASH-001",
+                    )
+                )
+            except Exception as exc:
+                errors.append(exc)
+            finally:
+                close_old_connections()
+
+        threads = [threading.Thread(target=attempt) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+
+        assert all(not thread.is_alive() for thread in threads)
+        assert not errors
+        assert len(results) == 2
+        assert results[0] == results[1]
+
+        item = InventoryItem.objects.get(product=product, location_code="MAIN")
+        assert item.quantity == 1
+        assert Sale.objects.count() == 1
+        assert SaleLine.objects.count() == 1
+        assert Payment.objects.count() == 1
+        assert InventoryMovement.objects.count() == 1
+        assert AuditEvent.objects.count() == 2
+        assert IdempotencyRecord.objects.count() == 1
+
+    def test_concurrent_full_cash_checkouts_cannot_oversell_last_unit(self):
+        product = Product.objects.create(
+            sku="SKU-CONCURRENT-CASH-LAST-001",
+            name="Concurrent Cash Last Unit",
+            currency="NGN",
+            unit_price_minor=1000,
+        )
+        InventoryItem.objects.create(
+            product=product,
+            location_code="MAIN",
+            quantity=1,
+        )
+
+        barrier = threading.Barrier(2)
+        results = []
+        errors = []
+
+        def attempt(suffix):
+            close_old_connections()
+            try:
+                barrier.wait(timeout=10)
+                results.append(
+                    process_pos_cash_sale(
+                        lines=[CheckoutLine(product_id=product.id, quantity=1)],
+                        location_code="MAIN",
+                        currency="NGN",
+                        amount_minor=1000,
+                        sale_idempotency_key=f"concurrent-cash-last-sale-{suffix}",
+                        payment_idempotency_key=f"concurrent-cash-last-payment-{suffix}",
+                        provider_reference=f"CONCURRENT-CASH-LAST-{suffix}",
+                    )
+                )
+            except CheckoutError as exc:
+                errors.append(exc)
+            finally:
+                close_old_connections()
+
+        threads = [
+            threading.Thread(target=attempt, args=("a",)),
+            threading.Thread(target=attempt, args=("b",)),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+
+        assert all(not thread.is_alive() for thread in threads)
+        assert len(results) == 1
+        assert len(errors) == 1
+        assert "insufficient stock" in str(errors[0])
+
+        item = InventoryItem.objects.get(product=product, location_code="MAIN")
+        assert item.quantity == 0
+        assert Sale.objects.count() == 1
+        assert SaleLine.objects.count() == 1
+        assert Payment.objects.count() == 1
+        assert InventoryMovement.objects.count() == 1
+        assert AuditEvent.objects.count() == 2
         assert IdempotencyRecord.objects.count() == 1
 
     def test_reusing_idempotency_key_with_different_request_fails(self):
