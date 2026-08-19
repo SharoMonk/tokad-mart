@@ -1,4 +1,5 @@
 from unittest.mock import Mock, patch
+import uuid
 
 import pytest
 
@@ -67,6 +68,7 @@ def test_external_payment_request_rolls_back_payment_when_outbox_enqueue_fails()
     product = make_product()
 
     sale = Sale.objects.create(
+        reference=uuid.uuid4(),
         location_code="MAIN",
         currency="NGN",
         subtotal_minor=1000,
