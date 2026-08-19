@@ -1,0 +1,81 @@
+services:
+  postgres:
+    image: postgres:18.4
+    container_name: tokad-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-tokad_mart}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - tokad_postgres_data:/var/lib/postgresql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-tokad_mart}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.outbox-worker
+    container_name: tokad-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${API_PORT:-8000}:8000"
+    command:
+      [
+        "runserver",
+        "0.0.0.0:8000",
+      ]
+
+  outbox-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.outbox-worker
+    container_name: tokad-outbox-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python manage.py check_outbox_health --strict"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    command:
+      [
+        "run_outbox_worker",
+        "--poll-interval",
+        "2",
+        "--limit",
+        "20",
+        "--lease-seconds",
+        "60",
+      ]
+
+volumes:
+  tokad_postgres_data:
+    external: true
+    name: 96ef94fe89dfa55e9d61a05f4ecbbfe4cfd9e348f88659ca45e659363b011dc6
