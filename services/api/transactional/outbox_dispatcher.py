@@ -115,7 +115,7 @@ def dispatch_outbox_events(
         raise ValueError("lease_seconds must be positive")
 
     completed = failed = skipped = 0
-    current = now or timezone.now()
+    current = now if now is not None else timezone.now()
 
     logger.info(
         "outbox dispatch started",
@@ -126,7 +126,8 @@ def dispatch_outbox_events(
     )
 
     for _ in range(limit):
-        event = _claim_event(now=current, lease_seconds=lease_seconds)
+        claim_time = current if now is not None else timezone.now()
+        event = _claim_event(now=claim_time, lease_seconds=lease_seconds)
         if event is None:
             break
 
@@ -146,7 +147,7 @@ def dispatch_outbox_events(
             error = RuntimeError(
                 f"no handler registered for {event.event_type}"
             )
-            _mark_failed(event.id, error, now=current)
+            _mark_failed(event.id, error, now=(current if now is not None else timezone.now()))
             failed += 1
             logger.error(
                 "outbox event failed: no handler",
@@ -161,7 +162,7 @@ def dispatch_outbox_events(
         try:
             handler(event)
         except Exception as exc:
-            _mark_failed(event.id, exc, now=current)
+            _mark_failed(event.id, exc, now=(current if now is not None else timezone.now()))
             failed += 1
             logger.exception(
                 "outbox event failed",
