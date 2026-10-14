@@ -225,3 +225,21 @@ def test_dispatch_command_records_missing_provider_configuration_as_retryable_fa
     assert event.locked_until is None
     assert event.available_at > timezone.now()
     assert "PAYSTACK_SECRET_KEY is not configured" in event.last_error
+
+@pytest.mark.django_db
+def test_dispatcher_backoff_starts_when_handler_fails():
+    event = make_event(key="slow-handler-backoff")
+    start = timezone.now()
+    finished = start + timedelta(seconds=30)
+
+    def fail_after_delay(_event):
+        raise RuntimeError("simulated slow failure")
+
+    with patch("transactional.outbox_dispatcher.timezone.now", side_effect=[start, finished]):
+        result = dispatch_outbox_events({"payment.test": fail_after_delay}, limit=1)
+
+    event.refresh_from_db()
+    assert result.failed == 1
+    assert event.status == OutboxEvent.Status.FAILED
+    assert event.available_at == finished + timedelta(seconds=1)
+
