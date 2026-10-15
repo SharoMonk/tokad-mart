@@ -1,6 +1,7 @@
 from django.urls import path
 
 from .payment_initiation_api import initiate_paystack_payment
+from .pos_read_api import pos_catalog, pos_receipt, pos_scope
 from .views import (
     health,
     paystack_webhook,
@@ -11,6 +12,9 @@ from .views import (
 
 
 urlpatterns = [
+    path("pos/scope/", pos_scope, name="pos-scope"),
+    path("pos/catalog/", pos_catalog, name="pos-catalog"),
+    path("pos/sales/<int:sale_id>/receipt/", pos_receipt, name="pos-receipt"),
     path(
         "health/",
         health,
