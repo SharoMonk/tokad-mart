@@ -1,0 +1,31 @@
+[Unit]
+Description=Tokad Mart transactional outbox worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tokad-mart
+Group=tokad-mart
+WorkingDirectory=/opt/tokad-mart/services/api
+EnvironmentFile=/etc/tokad-mart/api.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/tokad-mart/services/api/.venv/bin/python manage.py run_outbox_worker --poll-interval 2 --limit 20 --lease-seconds 60
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+UMask=027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tokad-mart-outbox-worker
+
+[Install]
+WantedBy=multi-user.target

@@ -1,3 +1,5 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.env
+tokad_mart_pre_compose.dump

@@ -1,0 +1,134 @@
+'use client'
+import {useMemo,useRef,useState} from 'react'
+
+type Item={id:number;sku:string;name:string;currency:string;unit_price_minor:number;stock:number}
+type Location={code:string;name:string;terminals:{code:string;name:string}[]}
+type Sale={sale_id:number;reference:string;total_minor:number;payment_status:string}
+type Receipt={reference:string;created_at:string;total_minor:number;lines:{name:string;quantity:number;line_total_minor:number}[]}
+
+const money=(n:number)=>new Intl.NumberFormat('en-NG',{style:'currency',currency:'NGN'}).format(n/100)
+
+export default function CanonicalPOS(){
+ const [username,setUsername]=useState('')
+ const [password,setPassword]=useState('')
+ const [auth,setAuth]=useState('')
+ const [locations,setLocations]=useState<Location[]>([])
+ const [location,setLocation]=useState('')
+ const [terminal,setTerminal]=useState('')
+ const [query,setQuery]=useState('')
+ const [products,setProducts]=useState<Item[]>([])
+ const [cart,setCart]=useState<{item:Item;quantity:number}[]>([])
+ const [sale,setSale]=useState<Sale|null>(null)
+ const [receipt,setReceipt]=useState<Receipt|null>(null)
+ const [message,setMessage]=useState('')
+ const [busy,setBusy]=useState(false)
+ const attempt=useRef<{fingerprint:string;id:string}|null>(null)
+ const sending=useRef(false)
+ const total=useMemo(()=>cart.reduce((n,x)=>n+x.item.unit_price_minor*x.quantity,0),[cart])
+ const headers=(credential=auth)=>({Authorization:'Basic '+credential})
+ const api=async(path:string,credential=auth,options:RequestInit={})=>{
+  const response=await fetch('/api/transactional/'+path,{...options,headers:{...headers(credential),...options.headers},cache:'no-store'})
+  const result=await response.json()
+  if(!response.ok)throw Error(result.message||result.error||'Request failed')
+  return result
+ }
+ async function signIn(){
+  try{
+   const credential=btoa(unescape(encodeURIComponent(username+':'+password)))
+   const scope=await api('pos/scope/',credential)
+   if(!scope.locations.length)throw Error('No active terminal is assigned to this operator.')
+   setLocations(scope.locations)
+   setLocation(scope.locations[0].code)
+   setTerminal(scope.locations[0].terminals[0].code)
+   setAuth(credential)
+   setPassword('')
+   setMessage('Operator authenticated. Cash-only POS ready.')
+  }catch(e){setMessage((e as Error).message)}
+ }
+ async function search(){
+  if(!query.trim()||!location||!terminal)return
+  try{
+   const data=await api('pos/catalog/?'+new URLSearchParams({q:query,location_code:location,terminal_code:terminal}))
+   setProducts(data.products)
+  }catch(e){setMessage((e as Error).message)}
+ }
+ function updateCart(item:Item,change:number){
+  if(sending.current||attempt.current)return
+  setCart(current=>{
+   const found=current.find(x=>x.item.id===item.id)
+   if(!found)return change>0?[...current,{item,quantity:1}]:current
+   return current.map(x=>x.item.id===item.id?{...x,quantity:Math.max(0,Math.min(item.stock,x.quantity+change))}:x).filter(x=>x.quantity>0)
+  })
+ }
+ async function checkout(){
+  if(sending.current||!cart.length)return
+  const lines=cart.map(x=>({product_id:x.item.id,quantity:x.quantity}))
+  const fingerprint=JSON.stringify({lines,location,terminal,total})
+  if(!attempt.current)attempt.current={fingerprint,id:crypto.randomUUID()}
+  if(attempt.current.fingerprint!==fingerprint){setMessage('An unresolved checkout exists. Restore the original cart before retrying.');return}
+  const id=attempt.current.id
+  sending.current=true
+  setBusy(true)
+  setMessage('Submitting cash sale...')
+  try{
+   const result=await api('pos/sales/',auth,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    lines,location_code:location,terminal_code:terminal,currency:'NGN',amount_minor:total,
+    sale_idempotency_key:'sale-'+id,payment_idempotency_key:'payment-'+id,provider_reference:'CASH-'+id
+   })})
+   attempt.current=null
+   setSale(result)
+   setCart([])
+   setMessage('Sale completed: '+result.reference)
+  }catch(e){setMessage((e as Error).message+' — if the request may have reached the server, retry the same sale without changing the cart.')}
+  finally{sending.current=false;setBusy(false)}
+ }
+ async function showReceipt(){
+  if(!sale)return
+  try{setReceipt(await api(`pos/sales/${sale.sale_id}/receipt/?`+new URLSearchParams({location_code:location,terminal_code:terminal})))}
+  catch(e){setMessage((e as Error).message)}
+ }
+ const button:React.CSSProperties={padding:'10px 14px',margin:4,cursor:'pointer'}
+ if(!auth)return <main style={{maxWidth:420,margin:'4rem auto',fontFamily:'system-ui'}}>
+  <h1>Tokad Mart · Transactional POS</h1>
+  <p>Authorized operator access — cash sales only</p>
+  <input placeholder="Username" value={username} onChange={e=>setUsername(e.target.value)}/>{' '}
+  <input placeholder="Password" type="password" value={password} onChange={e=>setPassword(e.target.value)}/>
+  <button style={button} onClick={signIn}>Sign in</button><p role="status">{message}</p>
+ </main>
+ return <main style={{fontFamily:'system-ui',maxWidth:1050,margin:'auto',padding:24}}>
+  <header style={{display:'flex',justifyContent:'space-between',gap:20}}>
+   <h1>Tokad Mart · Cash POS</h1><button style={button} onClick={()=>{setAuth('');setCart([]);setReceipt(null);attempt.current=null}}>Sign out</button>
+  </header>
+  <p>Location: <select value={location} disabled={busy||!!cart.length||!!attempt.current} onChange={e=>{setLocation(e.target.value);setTerminal(locations.find(l=>l.code===e.target.value)?.terminals[0]?.code||'');setProducts([])}}>
+   {locations.map(l=><option key={l.code} value={l.code}>{l.name}</option>)}
+  </select> Terminal: <select value={terminal} disabled={busy||!!cart.length||!!attempt.current} onChange={e=>{setTerminal(e.target.value);setProducts([])}}>
+   {locations.find(l=>l.code===location)?.terminals.map(t=><option key={t.code} value={t.code}>{t.name}</option>)}
+  </select></p>
+  <section style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:24}}>
+   <div>
+    <h2>Products</h2>
+    <input placeholder="Search name or SKU" value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')void search()}}/>
+    <button style={button} onClick={search}>Search</button>
+    {products.map(item=><p key={item.id}>{item.name} · {item.sku} · {money(item.unit_price_minor)} · Stock {item.stock} <button style={button} disabled={item.stock<1||busy||!!attempt.current} onClick={()=>updateCart(item,1)}>Add</button></p>)}
+   </div>
+   <div>
+    <h2>Cart</h2>
+    {cart.map(({item,quantity})=><p key={item.id}>{item.name} × {quantity} · {money(item.unit_price_minor*quantity)}
+     <button style={button} disabled={busy||!!attempt.current} onClick={()=>updateCart(item,-1)}>−</button>
+     <button style={button} disabled={busy||!!attempt.current||quantity>=item.stock} onClick={()=>updateCart(item,1)}>+</button>
+    </p>)}
+    <h2>Total: {money(total)}</h2>
+    <button style={button} disabled={busy||!cart.length} onClick={checkout}>{busy?'Processing…':'Complete cash sale'}</button>
+    {sale&&<button style={button} onClick={showReceipt}>View last receipt</button>}
+   </div>
+  </section>
+  {receipt&&<article style={{border:'1px solid #999',padding:20,maxWidth:380}}>
+    <h2>TOKAD MART</h2><p>Receipt {receipt.reference}</p><p>{new Date(receipt.created_at).toLocaleString()}</p>
+    {receipt.lines.map((l,i)=><p key={i}>{l.name} × {l.quantity} — {money(l.line_total_minor)}</p>)}
+    <strong>Total {money(receipt.total_minor)}</strong>
+    <p><button style={button} onClick={()=>window.print()}>Print page</button></p>
+   </article>}
+  <p role="status">{message}</p>
+  <p style={{fontSize:12}}>Pilot cash-only interface. Card, transfers, shifts, refunds and wholesale pricing require separate migration.</p>
+ </main>
+}
