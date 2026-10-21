@@ -1,4 +1,4 @@
-from rest_framework.authentication import BasicAuthentication, SessionAuthentication
+from rest_framework.authentication import SessionAuthentication
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from django.http import JsonResponse
@@ -9,7 +9,7 @@ from .pos_access import POSAccessError, authorize_pos_scope
 
 
 @api_view(["GET"])
-@authentication_classes([BasicAuthentication, SessionAuthentication])
+@authentication_classes([SessionAuthentication])
 @permission_classes([IsAuthenticated, IsPOSOperator])
 def pos_scope(request):
     operator = POSOperator.objects.get(user=request.user, is_active=True)
@@ -26,7 +26,7 @@ def pos_scope(request):
 
 
 @api_view(["GET"])
-@authentication_classes([BasicAuthentication, SessionAuthentication])
+@authentication_classes([SessionAuthentication])
 @permission_classes([IsAuthenticated, IsPOSOperator])
 def pos_catalog(request):
     location_code = request.query_params.get("location_code", "")
@@ -60,7 +60,7 @@ def pos_catalog(request):
 
 
 @api_view(["GET"])
-@authentication_classes([BasicAuthentication, SessionAuthentication])
+@authentication_classes([SessionAuthentication])
 @permission_classes([IsAuthenticated, IsPOSOperator])
 def pos_receipt(request, sale_id):
     location_code = request.query_params.get("location_code", "")
