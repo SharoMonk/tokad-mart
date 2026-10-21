@@ -121,9 +121,9 @@ export default function CanonicalPOS(){
   <header style={{display:'flex',justifyContent:'space-between',gap:20}}>
    <h1>Tokad Mart · Cash POS</h1><button style={button} onClick={()=>{setAuth('');setCart([]);setShift(null);setReceipt(null);attempt.current=null}}>Sign out</button>
   </header>
-  <p>Location: <select value={location} disabled={busy||!!cart.length||!!attempt.current} onChange={e=>{setLocation(e.target.value);setTerminal(locations.find(l=>l.code===e.target.value)?.terminals[0]?.code||'');setProducts([]);setShift(null)}}>
+  <p>Location: <select value={location} disabled={busy||!!shift||!!cart.length||!!attempt.current} onChange={e=>{setLocation(e.target.value);setTerminal(locations.find(l=>l.code===e.target.value)?.terminals[0]?.code||'');setProducts([]);setShift(null)}}>
    {locations.map(l=><option key={l.code} value={l.code}>{l.name}</option>)}
-  </select> Terminal: <select value={terminal} disabled={busy||!!cart.length||!!attempt.current} onChange={e=>{setTerminal(e.target.value);setProducts([]);setShift(null)}}>
+  </select> Terminal: <select value={terminal} disabled={busy||!!shift||!!cart.length||!!attempt.current} onChange={e=>{setTerminal(e.target.value);setProducts([]);setShift(null)}}>
    {locations.find(l=>l.code===location)?.terminals.map(t=><option key={t.code} value={t.code}>{t.name}</option>)}
   </select></p>
   <section style={{padding:12,border:'1px solid #bbb',marginBottom:16}}>
