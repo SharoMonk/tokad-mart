@@ -1,6 +1,6 @@
 import json
 from django.http import JsonResponse
-from rest_framework.authentication import BasicAuthentication, SessionAuthentication
+from rest_framework.authentication import SessionAuthentication
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import IsAuthenticated
 
@@ -16,7 +16,7 @@ def _error(exc, code, status):
 
 
 @api_view(["GET", "POST"])
-@authentication_classes([BasicAuthentication, SessionAuthentication])
+@authentication_classes([SessionAuthentication])
 @permission_classes([IsAuthenticated, IsPOSOperator])
 def cashier_shifts(request):
     try:
@@ -44,7 +44,7 @@ def cashier_shifts(request):
 
 
 @api_view(["POST"])
-@authentication_classes([BasicAuthentication, SessionAuthentication])
+@authentication_classes([SessionAuthentication])
 @permission_classes([IsAuthenticated, IsPOSOperator])
 def cashier_shift_close(request, shift_id):
     try:
