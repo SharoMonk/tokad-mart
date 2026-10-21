@@ -101,6 +101,19 @@ class CashierShift(models.Model):
         ]
 
 
+
+
+class ShiftReconciliationReview(models.Model):
+    class Decision(models.TextChoices):
+        APPROVED = "APPROVED"
+        REJECTED = "REJECTED"
+
+    shift = models.OneToOneField(CashierShift, on_delete=models.PROTECT, related_name="reconciliation_review")
+    supervisor = models.ForeignKey(POSOperator, on_delete=models.PROTECT, related_name="shift_reviews")
+    decision = models.CharField(max_length=16, choices=Decision.choices)
+    notes = models.TextField()
+    reviewed_at = models.DateTimeField(auto_now_add=True)
+
 class Sale(models.Model):
     class Status(models.TextChoices):
         DRAFT = "DRAFT"
