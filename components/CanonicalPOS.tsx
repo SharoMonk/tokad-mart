@@ -13,6 +13,10 @@ export default function CanonicalPOS(){
  const [username,setUsername]=useState('')
  const [password,setPassword]=useState('')
  const [auth,setAuth]=useState(false)
+ const [role,setRole]=useState('')
+ const [reviewShiftId,setReviewShiftId]=useState('')
+ const [reviewNotes,setReviewNotes]=useState('')
+ const [reviewDecision,setReviewDecision]=useState('APPROVED')
  const [shift,setShift]=useState<Shift|null>(null)
  const [openingCash,setOpeningCash]=useState('0')
  const [closingCash,setClosingCash]=useState('0')
@@ -59,7 +63,7 @@ export default function CanonicalPOS(){
    if(!scope.locations.length)return
    setLocations(scope.locations)
    const loc=scope.locations[0].code,term=scope.locations[0].terminals[0].code
-   setLocation(loc);setTerminal(term);setAuth(true)
+   setLocation(loc);setTerminal(term);setAuth(true);setRole(session.role||'')
    await refreshShift(loc,term)
   }catch(e){setMessage((e as Error).message)}
  }
@@ -77,7 +81,7 @@ export default function CanonicalPOS(){
    if(!scope.locations.length)throw Error('No active terminal is assigned to this operator.')
    setLocations(scope.locations)
    const loc=scope.locations[0].code,term=scope.locations[0].terminals[0].code
-   setLocation(loc);setTerminal(term);setAuth(true);setPassword('')
+   setLocation(loc);setTerminal(term);setAuth(true);setRole((await api('pos/session/')).role||'');setPassword('')
    await refreshShift(loc,term)
    setMessage('Signed in using secure session cookies.')
   }catch(e){setMessage((e as Error).message)}
@@ -85,7 +89,7 @@ export default function CanonicalPOS(){
  async function signOut(){
   if(attempt.current){setMessage('Resolve the pending checkout before signing out.');return}
   try{await api('pos/logout/',{method:'POST'})}catch(e){setMessage((e as Error).message);return}
-  setAuth(false);setCart([]);setReceipt(null);setShift(null);setSale(null)
+  setAuth(false);setRole('');setCart([]);setReceipt(null);setShift(null);setSale(null)
  }
  function parseCash(value:string){
   if(!/^\d+(\.\d{1,2})?$/.test(value))throw Error('Enter a valid cash amount, e.g. 5000.00')
@@ -105,6 +109,18 @@ export default function CanonicalPOS(){
   try{
    const data=await api(`pos/shifts/${shift.id}/close/`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({closing_cash_minor:parseCash(closingCash)})})
    setShift(null);setMessage('Shift closed. Expected cash: '+money(data.shift.expected_cash_minor)+'; variance: '+money(data.shift.variance_minor))
+  }catch(e){setMessage((e as Error).message)}
+ }
+ async function submitReview(){
+  const id=Number(reviewShiftId)
+  if(!Number.isSafeInteger(id)||id<=0){setMessage('Enter a valid closed shift ID.');return}
+  try{
+   const record=await api(`pos/shifts/${id}/review/`,{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({decision:reviewDecision,notes:reviewNotes})
+   })
+   setMessage('Shift #'+id+' reviewed: '+record.decision+' (variance '+money(record.variance_minor)+')')
+   setReviewNotes('')
   }catch(e){setMessage((e as Error).message)}
  }
  async function search(){
@@ -176,6 +192,14 @@ export default function CanonicalPOS(){
     <input aria-label="Opening cash in naira" value={openingCash} onChange={e=>setOpeningCash(e.target.value)} placeholder="Opening cash ₦" />
     <button style={button} disabled={busy} onClick={openShift}>Open shift</button></p>}
   </section>
+  {role==='SUPERVISOR'&&<section style={{border:'1px solid #aaa',padding:12,marginBottom:16}}>
+   <h2>Supervisor reconciliation review</h2>
+   <p>Review a closed shift assigned to another cashier. Approval does not change the counted cash.</p>
+   <input aria-label="Closed shift ID" placeholder="Closed shift ID" value={reviewShiftId} onChange={e=>setReviewShiftId(e.target.value)}/>
+   <select aria-label="Review decision" value={reviewDecision} onChange={e=>setReviewDecision(e.target.value)}><option value="APPROVED">Approve</option><option value="REJECTED">Reject</option></select>
+   <input aria-label="Review notes" placeholder="Required review notes" value={reviewNotes} onChange={e=>setReviewNotes(e.target.value)}/>
+   <button style={button} disabled={!reviewNotes.trim()} onClick={submitReview}>Submit review</button>
+  </section>}
   <section style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:24}}>
    <div>
     <h2>Products</h2>
