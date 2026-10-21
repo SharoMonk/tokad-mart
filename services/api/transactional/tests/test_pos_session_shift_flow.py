@@ -47,7 +47,7 @@ def test_session_login_requires_csrf_and_logout_invalidates_session(setup_cashie
     assert logged_in.status_code == 200
     assert client.get("/api/transactional/pos/session/").json()["authenticated"]
     assert client.get("/api/transactional/pos/scope/").status_code == 200
-    assert post(client, "/api/transactional/pos/logout/", {}, csrf).status_code == 200
+    assert post(client, "/api/transactional/pos/logout/", {}, client.cookies["csrftoken"].value).status_code == 200
     assert not client.get("/api/transactional/pos/session/").json()["authenticated"]
 
 
