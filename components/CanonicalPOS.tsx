@@ -36,7 +36,14 @@ export default function CanonicalPOS(){
    headers:{...(options.method&&options.method!=='GET'?{'X-CSRFToken':csrf()}:{}),...options.headers}
   })
   const result=await response.json()
-  if(!response.ok)throw Error(result.message||result.error||'Request failed')
+  if(!response.ok){
+   if(response.status===401 || (response.status===403 && result.error==='not_authenticated')){
+    setAuth(false);setShift(null);setPassword('')
+    setMessage('Cashier session expired. Sign in again; your pending cart is retained for safe retry.')
+    throw Error('Session expired — sign in again to continue.')
+   }
+   throw Error(result.message||result.error||'Request failed')
+  }
   return result
  }
  async function refreshShift(loc=location,term=terminal){
@@ -47,7 +54,7 @@ export default function CanonicalPOS(){
  async function initialize(){
   try{
    const session=await api('pos/session/')
-   if(!session.authenticated)return
+   if(!session.authenticated){setAuth(false);setShift(null);return}
    const scope=await api('pos/scope/')
    if(!scope.locations.length)return
    setLocations(scope.locations)
@@ -56,7 +63,12 @@ export default function CanonicalPOS(){
    await refreshShift(loc,term)
   }catch(e){setMessage((e as Error).message)}
  }
- useEffect(()=>{void initialize()},[])
+ useEffect(()=>{
+  void initialize()
+  const onFocus=()=>{void initialize()}
+  window.addEventListener('focus',onFocus)
+  return ()=>window.removeEventListener('focus',onFocus)
+ },[])
  async function signIn(){
   try{
    await api('pos/session/')
@@ -141,6 +153,7 @@ export default function CanonicalPOS(){
  if(!auth)return <main style={{maxWidth:420,margin:'4rem auto',fontFamily:'system-ui'}}>
   <h1>Tokad Mart · Transactional POS</h1>
   <p>Authorized operator access — cash sales only</p>
+  {attempt.current&&<p role="alert">An earlier checkout needs verification. Sign in again and retry the unchanged cart before starting another sale.</p>}
   <input placeholder="Username" value={username} onChange={e=>setUsername(e.target.value)}/>{' '}
   <input placeholder="Password" type="password" value={password} onChange={e=>setPassword(e.target.value)}/>
   <button style={button} onClick={signIn}>Sign in</button><p role="status">{message}</p>
