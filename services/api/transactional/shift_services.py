@@ -3,7 +3,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Sum
 from django.utils import timezone
 
-from .models import AuditEvent, CashierShift, Payment, POSOperator
+from .models import AuditEvent, CashierShift, Payment, POSOperator, Sale
 from .pos_access import authorize_pos_scope
 
 
@@ -70,6 +70,15 @@ def close_shift(*, user, shift_id, closing_cash_minor):
     shift = _operator_shift(user, shift_id, lock=True)
     if shift.status != CashierShift.Status.OPEN:
         raise ShiftError("shift is already closed")
+    # Do not certify a drawer while linked transactions are incomplete or mismatched.
+    for sale in Sale.objects.filter(shift=shift).prefetch_related("payments"):
+        if sale.status != Sale.Status.COMPLETED:
+            raise ShiftError("cannot close shift with incomplete sales")
+        successful_cash = [payment for payment in sale.payments.all()
+                           if payment.method == Payment.Method.CASH
+                           and payment.status == Payment.Status.SUCCEEDED]
+        if len(successful_cash) != 1 or successful_cash[0].amount_minor != sale.total_minor:
+            raise ShiftError("cash payment reconciliation failed for shift sale")
     cash_sales_minor = Payment.objects.filter(
         sale__shift=shift,
         sale__status="COMPLETED",
