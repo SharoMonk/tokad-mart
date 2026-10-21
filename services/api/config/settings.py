@@ -72,3 +72,9 @@ SESSION_COOKIE_SAMESITE = 'Lax'
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SAMESITE = 'Lax'
 CSRF_COOKIE_SECURE = not DEBUG
+
+# Compatibility checkout remains enabled in development for legacy test coverage.
+# Explicitly disable in production; do not bypass the shift-bound endpoint.
+POS_ENABLE_LEGACY_CHECKOUT = DEBUG and os.getenv("POS_ENABLE_LEGACY_CHECKOUT", "1") == "1"
+SESSION_COOKIE_AGE = int(os.getenv("POS_SESSION_AGE_SECONDS", "28800"))
+SESSION_SAVE_EVERY_REQUEST = False
