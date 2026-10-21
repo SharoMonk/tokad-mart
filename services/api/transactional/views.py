@@ -3,6 +3,7 @@ import json
 import logging
 
 from django.http import JsonResponse
+from django.conf import settings
 
 from rest_framework.authentication import BasicAuthentication, SessionAuthentication
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
@@ -43,6 +44,8 @@ def health(_request):
 @authentication_classes([BasicAuthentication, SessionAuthentication])
 @permission_classes([IsAuthenticated, IsPOSOperator])
 def pos_cash_sale(request):
+    if not getattr(settings, 'POS_ENABLE_LEGACY_CHECKOUT', False):
+        return JsonResponse({'error': 'legacy_checkout_disabled', 'message': 'Use shift-authorized checkout.'}, status=410)
     try:
         payload = json.loads(request.body)
     except (json.JSONDecodeError, UnicodeDecodeError):
