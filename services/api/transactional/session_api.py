@@ -20,9 +20,11 @@ def pos_session(request):
         user.is_authenticated and user.is_active and user.is_staff
         and POSOperator.objects.filter(user=user, is_active=True).exists()
     )
+    role = POSOperator.objects.get(user=user).role if authenticated else None
     return JsonResponse({
         "authenticated": authenticated,
         "username": user.get_username() if authenticated else None,
+        "role": role,
     })
 
 
@@ -53,7 +55,7 @@ def pos_login(request):
     login(request, user)
     clear_account_failures(keys)
     request.session["pos_last_activity"] = int(timezone.now().timestamp())
-    return JsonResponse({"authenticated": True, "username": user.get_username()})
+    return JsonResponse({"authenticated": True, "username": user.get_username(), "role": POSOperator.objects.get(user=user).role})
 
 
 @require_POST
