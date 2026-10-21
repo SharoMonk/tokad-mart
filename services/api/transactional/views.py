@@ -57,6 +57,9 @@ def pos_cash_sale(request):
         return JsonResponse({"error": "pos_access_denied", "message": str(exc)}, status=403)
 
     try:
+        shift_id = payload.get("shift_id")
+        if shift_id is not None and (type(shift_id) is not int or shift_id <= 0):
+            return JsonResponse({"error": "invalid_request", "message": "shift_id must be a positive integer"}, status=400)
         result = process_pos_cash_sale(
             lines=data.lines,
             location_code=data.location_code,
@@ -65,6 +68,9 @@ def pos_cash_sale(request):
             sale_idempotency_key=data.sale_idempotency_key,
             payment_idempotency_key=data.payment_idempotency_key,
             provider_reference=data.provider_reference,
+            shift_id=shift_id,
+            operator_id=request.user.pos_operator.pk,
+            terminal_code=data.terminal_code,
         )
     except ProductUnavailableError as exc:
         return JsonResponse({"error": "product_unavailable", "message": str(exc)}, status=404)
