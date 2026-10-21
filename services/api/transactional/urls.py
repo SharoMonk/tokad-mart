@@ -3,6 +3,7 @@ from django.urls import path
 from .payment_initiation_api import initiate_paystack_payment
 from .pos_read_api import pos_catalog, pos_receipt, pos_scope
 from .shift_api import cashier_shifts, cashier_shift_close
+from .supervisor_review_api import supervisor_reconciliation
 from .session_api import pos_session, pos_login, pos_logout
 from .shift_sales_api import shift_cash_sale
 from .views import (
@@ -15,6 +16,7 @@ from .views import (
 
 
 urlpatterns = [
+    path("pos/shifts/<int:shift_id>/review/", supervisor_reconciliation, name="supervisor-shift-review"),
     path("pos/shift-sales/", shift_cash_sale, name="pos-shift-cash-sale"),
     path("pos/session/", pos_session, name="pos-session"),
     path("pos/login/", pos_login, name="pos-login"),
