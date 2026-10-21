@@ -4,6 +4,7 @@ import {useMemo,useRef,useState} from 'react'
 type Item={id:number;sku:string;name:string;currency:string;unit_price_minor:number;stock:number}
 type Location={code:string;name:string;terminals:{code:string;name:string}[]}
 type Sale={sale_id:number;reference:string;total_minor:number;payment_status:string}
+type Shift={id:number;status:string;opening_cash_minor:number;expected_cash_minor?:number;variance_minor?:number}
 type Receipt={reference:string;created_at:string;total_minor:number;lines:{name:string;quantity:number;line_total_minor:number}[]}
 
 const money=(n:number)=>new Intl.NumberFormat('en-NG',{style:'currency',currency:'NGN'}).format(n/100)
@@ -19,6 +20,9 @@ export default function CanonicalPOS(){
  const [products,setProducts]=useState<Item[]>([])
  const [cart,setCart]=useState<{item:Item;quantity:number}[]>([])
  const [sale,setSale]=useState<Sale|null>(null)
+ const [shift,setShift]=useState<Shift|null>(null)
+ const [openingCash,setOpeningCash]=useState('0')
+ const [closingCash,setClosingCash]=useState('0')
  const [receipt,setReceipt]=useState<Receipt|null>(null)
  const [message,setMessage]=useState('')
  const [busy,setBusy]=useState(false)
@@ -41,8 +45,26 @@ export default function CanonicalPOS(){
    setLocation(scope.locations[0].code)
    setTerminal(scope.locations[0].terminals[0].code)
    setAuth(credential)
+   const active=await api('pos/shifts/?'+new URLSearchParams({location_code:scope.locations[0].code,terminal_code:scope.locations[0].terminals[0].code}),credential)
+   setShift(active.shift)
    setPassword('')
    setMessage('Operator authenticated. Cash-only POS ready.')
+  }catch(e){setMessage((e as Error).message)}
+ }
+ async function openShift(){
+  try{
+   if(!/^\d+$/.test(openingCash))throw Error('Opening cash must be a whole number of naira')
+   const data=await api('pos/shifts/',auth,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location_code:location,terminal_code:terminal,opening_cash_minor:Number(openingCash)*100})})
+   setShift(data.shift);setMessage('Cashier shift opened.')
+  }catch(e){setMessage((e as Error).message)}
+ }
+ async function closeShift(){
+  if(!shift||cart.length||attempt.current)return setMessage('Clear the cart and resolve any checkout before closing.')
+  try{
+   if(!/^\d+$/.test(closingCash))throw Error('Closing cash must be a whole number of naira')
+   const data=await api('pos/shifts/'+shift.id+'/close/',auth,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({closing_cash_minor:Number(closingCash)*100})})
+   setShift(null)
+   setMessage('Shift closed. Expected: '+money(data.shift.expected_cash_minor)+'; variance: '+money(data.shift.variance_minor))
   }catch(e){setMessage((e as Error).message)}
  }
  async function search(){
@@ -61,7 +83,7 @@ export default function CanonicalPOS(){
   })
  }
  async function checkout(){
-  if(sending.current||!cart.length)return
+  if(sending.current||!cart.length||!shift)return
   const lines=cart.map(x=>({product_id:x.item.id,quantity:x.quantity}))
   const fingerprint=JSON.stringify({lines,location,terminal,total})
   if(!attempt.current)attempt.current={fingerprint,id:crypto.randomUUID()}
@@ -72,7 +94,7 @@ export default function CanonicalPOS(){
   setMessage('Submitting cash sale...')
   try{
    const result=await api('pos/sales/',auth,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-    lines,location_code:location,terminal_code:terminal,currency:'NGN',amount_minor:total,
+    lines,shift_id:shift.id,location_code:location,terminal_code:terminal,currency:'NGN',amount_minor:total,
     sale_idempotency_key:'sale-'+id,payment_idempotency_key:'payment-'+id,provider_reference:'CASH-'+id
    })})
    attempt.current=null
@@ -97,19 +119,28 @@ export default function CanonicalPOS(){
  </main>
  return <main style={{fontFamily:'system-ui',maxWidth:1050,margin:'auto',padding:24}}>
   <header style={{display:'flex',justifyContent:'space-between',gap:20}}>
-   <h1>Tokad Mart · Cash POS</h1><button style={button} onClick={()=>{setAuth('');setCart([]);setReceipt(null);attempt.current=null}}>Sign out</button>
+   <h1>Tokad Mart · Cash POS</h1><button style={button} onClick={()=>{setAuth('');setCart([]);setShift(null);setReceipt(null);attempt.current=null}}>Sign out</button>
   </header>
-  <p>Location: <select value={location} disabled={busy||!!cart.length||!!attempt.current} onChange={e=>{setLocation(e.target.value);setTerminal(locations.find(l=>l.code===e.target.value)?.terminals[0]?.code||'');setProducts([])}}>
+  <p>Location: <select value={location} disabled={busy||!!cart.length||!!attempt.current} onChange={e=>{setLocation(e.target.value);setTerminal(locations.find(l=>l.code===e.target.value)?.terminals[0]?.code||'');setProducts([]);setShift(null)}}>
    {locations.map(l=><option key={l.code} value={l.code}>{l.name}</option>)}
-  </select> Terminal: <select value={terminal} disabled={busy||!!cart.length||!!attempt.current} onChange={e=>{setTerminal(e.target.value);setProducts([])}}>
+  </select> Terminal: <select value={terminal} disabled={busy||!!cart.length||!!attempt.current} onChange={e=>{setTerminal(e.target.value);setProducts([]);setShift(null)}}>
    {locations.find(l=>l.code===location)?.terminals.map(t=><option key={t.code} value={t.code}>{t.name}</option>)}
   </select></p>
+  <section style={{padding:12,border:'1px solid #bbb',marginBottom:16}}>
+   <h2>Cashier Shift</h2>
+   {shift?<p>Open shift #{shift.id} · Opening cash {money(shift.opening_cash_minor)}
+    <input aria-label="Closing cash in naira" value={closingCash} onChange={e=>setClosingCash(e.target.value)} placeholder="Closing cash ₦" />
+    <button style={button} disabled={busy||!!cart.length||!!attempt.current} onClick={closeShift}>Close shift</button></p>
+   :<p>No open shift.
+    <input aria-label="Opening cash in naira" value={openingCash} onChange={e=>setOpeningCash(e.target.value)} placeholder="Opening cash ₦" />
+    <button style={button} disabled={busy} onClick={openShift}>Open shift</button></p>}
+  </section>
   <section style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:24}}>
    <div>
     <h2>Products</h2>
     <input placeholder="Search name or SKU" value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')void search()}}/>
     <button style={button} onClick={search}>Search</button>
-    {products.map(item=><p key={item.id}>{item.name} · {item.sku} · {money(item.unit_price_minor)} · Stock {item.stock} <button style={button} disabled={item.stock<1||busy||!!attempt.current} onClick={()=>updateCart(item,1)}>Add</button></p>)}
+    {products.map(item=><p key={item.id}>{item.name} · {item.sku} · {money(item.unit_price_minor)} · Stock {item.stock} <button style={button} disabled={!shift||item.stock<1||busy||!!attempt.current} onClick={()=>updateCart(item,1)}>Add</button></p>)}
    </div>
    <div>
     <h2>Cart</h2>
@@ -118,7 +149,7 @@ export default function CanonicalPOS(){
      <button style={button} disabled={busy||!!attempt.current||quantity>=item.stock} onClick={()=>updateCart(item,1)}>+</button>
     </p>)}
     <h2>Total: {money(total)}</h2>
-    <button style={button} disabled={busy||!cart.length} onClick={checkout}>{busy?'Processing…':'Complete cash sale'}</button>
+    <button style={button} disabled={busy||!shift||!cart.length} onClick={checkout}>{busy?'Processing…':'Complete cash sale'}</button>
     {sale&&<button style={button} onClick={showReceipt}>View last receipt</button>}
    </div>
   </section>
