@@ -11,6 +11,13 @@ from transactional.models import (
 )
 
 
+@pytest.fixture(autouse=True)
+def local_login_cache_for_tests(settings):
+    """These tests exercise local throttling; Redis is tested separately."""
+    settings.DEBUG = True
+    settings.POS_LOGIN_REDIS_URL = ""
+
+
 @pytest.fixture
 def setup_cashier(db):
     user = get_user_model().objects.create_user(
