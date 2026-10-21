@@ -33,6 +33,9 @@ def supervisor_reconciliation(request, shift_id):
     except POSAccessError:
         return JsonResponse({"error": "pos_access_denied"}, status=403)
 
+    if shift.operator_id == operator.pk:
+        return JsonResponse({"error": "self_review_forbidden"}, status=403)
+
     if request.method == "GET":
         review = ShiftReconciliationReview.objects.filter(shift=shift).first()
         return JsonResponse({
