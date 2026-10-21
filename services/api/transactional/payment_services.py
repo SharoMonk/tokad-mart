@@ -22,6 +22,7 @@ from .exceptions import (
 )
 from .models import (
     AuditEvent,
+    CashierShift,
     IdempotencyRecord,
     InventoryItem,
     InventoryMovement,
@@ -532,14 +533,36 @@ def process_pos_cash_sale(
     sale_idempotency_key: str,
     payment_idempotency_key: str,
     provider_reference: str,
+    shift_id: int | None = None,
+    operator_id: int | None = None,
+    terminal_code: str | None = None,
 ) -> POSSaleResult:
     """Run the complete cash POS flow in one database transaction."""
+    shift = None
+    if shift_id is not None:
+        try:
+            shift = CashierShift.objects.select_for_update().get(pk=shift_id)
+        except CashierShift.DoesNotExist as exc:
+            raise CheckoutError("cashier shift was not found") from exc
+        if (shift.status != CashierShift.Status.OPEN
+                or shift.location.code != location_code
+                or shift.terminal.code != terminal_code
+                or shift.operator_id != operator_id):
+            raise CheckoutError("cashier shift is not open or does not match operator and terminal")
     sale = create_pending_sale(
         lines=lines,
         location_code=location_code,
         currency=currency,
         idempotency_key=sale_idempotency_key,
     )
+
+    if shift is not None:
+        existing = Sale.objects.select_for_update().get(pk=sale.sale_id)
+        if existing.shift_id not in (None, shift.pk):
+            raise CheckoutError("sale belongs to another cashier shift")
+        if existing.shift_id is None:
+            existing.shift = shift
+            existing.save(update_fields=["shift"])
 
     payment = record_successful_payment(
         sale_id=sale.sale_id,
