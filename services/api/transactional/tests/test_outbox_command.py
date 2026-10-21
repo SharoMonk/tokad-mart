@@ -11,6 +11,8 @@ from transactional.payment_providers import PaymentProviderError
 
 @pytest.mark.django_db(transaction=True)
 def test_dispatch_command_does_not_initialize_provider_when_queue_is_empty(capsys):
+    # Explicitly control the global command queue when running with --reuse-db.
+    OutboxEvent.objects.all().delete()
     with patch(
         "transactional.management.commands.dispatch_outbox_events.PaystackProvider"
     ) as provider_cls:
@@ -25,6 +27,8 @@ def test_dispatch_command_does_not_initialize_provider_when_queue_is_empty(capsy
 def test_dispatch_command_records_missing_provider_configuration_as_retryable_failure(
     capsys,
 ):
+    # This command drains the global ready queue; make its expected count exact.
+    OutboxEvent.objects.all().delete()
     event = enqueue_outbox_event(
         event_type="payment.initiation.requested",
         aggregate_type="Payment",
