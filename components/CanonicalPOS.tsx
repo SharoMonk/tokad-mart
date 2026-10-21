@@ -37,7 +37,7 @@ export default function CanonicalPOS(){
   })
   const result=await response.json()
   if(!response.ok){
-   if(response.status===401 || (response.status===403 && result.error==='not_authenticated')){
+   if(response.status===401 || (response.status===403 && (result.error==='not_authenticated' || result.detail==='Authentication credentials were not provided.'))){
     setAuth(false);setShift(null);setPassword('')
     setMessage('Cashier session expired. Sign in again; your pending cart is retained for safe retry.')
     throw Error('Session expired — sign in again to continue.')
