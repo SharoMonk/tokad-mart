@@ -3,6 +3,7 @@ from django.urls import path
 from .payment_initiation_api import initiate_paystack_payment
 from .pos_read_api import pos_catalog, pos_receipt, pos_scope
 from .shift_api import cashier_shifts, cashier_shift_close
+from .session_api import pos_session, pos_login, pos_logout
 from .views import (
     health,
     paystack_webhook,
@@ -13,6 +14,9 @@ from .views import (
 
 
 urlpatterns = [
+    path("pos/session/", pos_session, name="pos-session"),
+    path("pos/login/", pos_login, name="pos-login"),
+    path("pos/logout/", pos_logout, name="pos-logout"),
     path("pos/shifts/", cashier_shifts, name="cashier-shifts"),
     path("pos/shifts/<int:shift_id>/close/", cashier_shift_close, name="cashier-shift-close"),
     path("pos/scope/", pos_scope, name="pos-scope"),
