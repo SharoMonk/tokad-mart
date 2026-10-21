@@ -94,3 +94,5 @@ POS_SESSION_IDLE_SECONDS = int(os.getenv("POS_SESSION_IDLE_SECONDS", "900"))
 
 # Production login throttle uses shared Redis with atomic Lua operations.
 POS_LOGIN_REDIS_URL = os.getenv('POS_LOGIN_REDIS_URL', '')
+
+POS_LOGIN_MAX_IP_ATTEMPTS = int(os.getenv('POS_LOGIN_MAX_IP_ATTEMPTS', '50'))
