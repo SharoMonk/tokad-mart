@@ -1,6 +1,6 @@
 """Atomic Redis-backed rate limiting for production, local cache for development.
 
-Production checks and increments are executed by Redis Lua scripts atomically.
+Production attempts are reserved using one atomic Redis Lua script.
 Every API worker must point at the same authenticated Redis instance.
 """
 import hashlib
@@ -40,39 +40,38 @@ def _redis():
     return Redis.from_url(url, socket_connect_timeout=2, socket_timeout=2)
 
 
-# The check is atomic across the IP and account keys.
-_CHECK = """
-local max = tonumber(ARGV[1])
-for i = 1, #KEYS do
-  if tonumber(redis.call('GET', KEYS[i]) or '0') >= max then
-    return 1
-  end
+# Reserve both counters atomically before checking credentials. This prevents
+# concurrent login bursts from crossing the configured account threshold.
+# Keys order: client IP, account. TTL is a fixed window from first attempt.
+_RESERVE = """
+local ipmax = tonumber(ARGV[1])
+local accountmax = tonumber(ARGV[2])
+local ttl = tonumber(ARGV[3])
+if tonumber(redis.call('GET', KEYS[1]) or '0') >= ipmax then return 1 end
+if tonumber(redis.call('GET', KEYS[2]) or '0') >= accountmax then return 1 end
+for i = 1, 2 do
+  local n = redis.call('INCR', KEYS[i])
+  if n == 1 then redis.call('EXPIRE', KEYS[i], ttl) end
 end
 return 0
-"""
-
-# Atomic increments preserve the fixed window's initial TTL.
-_FAIL = """
-local ttl = tonumber(ARGV[1])
-for i = 1, #KEYS do
-  local value = redis.call('INCR', KEYS[i])
-  if value == 1 then redis.call('EXPIRE', KEYS[i], ttl) end
-end
-return 1
 """
 
 
 def is_limited(keys):
     redis = _redis()
     if redis is not None:
-        return bool(redis.eval(_CHECK, len(keys), *keys, settings.POS_LOGIN_MAX_FAILURES))
+        return bool(redis.eval(
+            _RESERVE, 2, *keys,
+            settings.POS_LOGIN_MAX_IP_ATTEMPTS,
+            settings.POS_LOGIN_MAX_FAILURES,
+            settings.POS_LOGIN_WINDOW_SECONDS,
+        ))
     return any(int(cache.get(key, 0)) >= settings.POS_LOGIN_MAX_FAILURES for key in keys)
 
 
 def record_failure(keys):
-    redis = _redis()
-    if redis is not None:
-        redis.eval(_FAIL, len(keys), *keys, settings.POS_LOGIN_WINDOW_SECONDS)
+    # Production attempts were already charged atomically before authenticate().
+    if _redis() is not None:
         return
     for key in keys:
         if not cache.add(key, 1, timeout=settings.POS_LOGIN_WINDOW_SECONDS):
