@@ -5,7 +5,6 @@ type Item={id:number;sku:string;name:string;currency:string;unit_price_minor:num
 type Location={code:string;name:string;terminals:{code:string;name:string}[]}
 type Sale={sale_id:number;reference:string;total_minor:number;payment_status:string}
 type Shift={id:number;status:string;opening_cash_minor:number;expected_cash_minor?:number;variance_minor?:number}
-type Shift={id:number;status:string;opening_cash_minor:number;expected_cash_minor?:number;variance_minor?:number}
 type Receipt={reference:string;created_at:string;total_minor:number;lines:{name:string;quantity:number;line_total_minor:number}[]}
 
 const money=(n:number)=>new Intl.NumberFormat('en-NG',{style:'currency',currency:'NGN'}).format(n/100)
@@ -24,9 +23,6 @@ export default function CanonicalPOS(){
  const [products,setProducts]=useState<Item[]>([])
  const [cart,setCart]=useState<{item:Item;quantity:number}[]>([])
  const [sale,setSale]=useState<Sale|null>(null)
- const [shift,setShift]=useState<Shift|null>(null)
- const [openingCash,setOpeningCash]=useState('0')
- const [closingCash,setClosingCash]=useState('0')
  const [receipt,setReceipt]=useState<Receipt|null>(null)
  const [message,setMessage]=useState('')
  const [busy,setBusy]=useState(false)
@@ -80,7 +76,7 @@ export default function CanonicalPOS(){
   setAuth(false);setCart([]);setReceipt(null);setShift(null);setSale(null)
  }
  function parseCash(value:string){
-  if(!/^\\d+(\\.\\d{1,2})?$/.test(value))throw Error('Enter a valid cash amount, e.g. 5000.00')
+  if(!/^\d+(\.\d{1,2})?$/.test(value))throw Error('Enter a valid cash amount, e.g. 5000.00')
   const [naira,kobo='']=value.split('.')
   const amount=Number(naira)*100+Number(kobo.padEnd(2,'0'))
   if(!Number.isSafeInteger(amount))throw Error('Cash amount exceeds supported range')
@@ -151,11 +147,11 @@ export default function CanonicalPOS(){
  </main>
  return <main style={{fontFamily:'system-ui',maxWidth:1050,margin:'auto',padding:24}}>
   <header style={{display:'flex',justifyContent:'space-between',gap:20}}>
-   <h1>Tokad Mart · Cash POS</h1><button style={button} onClick={()=>{setAuth('');setCart([]);setShift(null);setReceipt(null);attempt.current=null}}>Sign out</button>
+   <h1>Tokad Mart · Cash POS</h1><button style={button} onClick={signOut}>Sign out</button>
   </header>
-  <p>Location: <select value={location} disabled={busy||!!shift||!!cart.length||!!attempt.current} onChange={e=>{setLocation(e.target.value);setTerminal(locations.find(l=>l.code===e.target.value)?.terminals[0]?.code||'');setProducts([]);setShift(null)}}>
+  <p>Location: <select value={location} disabled={busy||!!shift||!!cart.length||!!attempt.current} onChange={e=>{setLocation(e.target.value);setTerminal(locations.find(l=>l.code===e.target.value)?.terminals[0]?.code||'');setProducts([]);setShift(null);void refreshShift(e.target.value,locations.find(l=>l.code===e.target.value)?.terminals[0]?.code||'')}}>
    {locations.map(l=><option key={l.code} value={l.code}>{l.name}</option>)}
-  </select> Terminal: <select value={terminal} disabled={busy||!!shift||!!cart.length||!!attempt.current} onChange={e=>{setTerminal(e.target.value);setProducts([]);setShift(null)}}>
+  </select> Terminal: <select value={terminal} disabled={busy||!!shift||!!cart.length||!!attempt.current} onChange={e=>{setTerminal(e.target.value);setProducts([]);setShift(null);void refreshShift(location,e.target.value)}}>
    {locations.find(l=>l.code===location)?.terminals.map(t=><option key={t.code} value={t.code}>{t.name}</option>)}
   </select></p>
   <section style={{padding:12,border:'1px solid #bbb',marginBottom:16}}>
@@ -166,12 +162,6 @@ export default function CanonicalPOS(){
    :<p>No open shift.
     <input aria-label="Opening cash in naira" value={openingCash} onChange={e=>setOpeningCash(e.target.value)} placeholder="Opening cash ₦" />
     <button style={button} disabled={busy} onClick={openShift}>Open shift</button></p>}
-  </section>
-  <section style={{border:'1px solid #aaa',padding:12,marginBottom:16}}>
-   {shift?<><strong>Open shift #{shift.id}</strong> <label>Closing cash ₦ <input value={closingCash} onChange={e=>setClosingCash(e.target.value)}/></label>
-   <button style={button} disabled={busy||!!cart.length||!!attempt.current} onClick={closeShift}>Close shift</button></>:
-   <><strong>No active cashier shift.</strong> <label>Opening cash ₦ <input value={openingCash} onChange={e=>setOpeningCash(e.target.value)}/></label>
-   <button style={button} onClick={openShift}>Open shift</button></>}
   </section>
   <section style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:24}}>
    <div>
