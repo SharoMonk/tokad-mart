@@ -55,7 +55,13 @@ def test_supervisor_cannot_review_open_shift():
     operator = POSOperator.objects.create(user=user, role=POSOperator.Role.SUPERVISOR)
     POSOperatorLocation.objects.create(operator=operator, location=location)
     POSOperatorTerminal.objects.create(operator=operator, terminal=terminal)
-    shift = CashierShift.objects.create(operator=operator, location=location, terminal=terminal)
+    cashier = get_user_model().objects.create_user(
+        "cashier-b", password="test", is_staff=True
+    )
+    cashier_operator = POSOperator.objects.create(user=cashier)
+    shift = CashierShift.objects.create(
+        operator=cashier_operator, location=location, terminal=terminal
+    )
     client = Client()
     client.force_login(user)
     response = client.post(
