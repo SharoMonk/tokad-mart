@@ -1,9 +1,10 @@
 'use client'
-import {useMemo,useRef,useState} from 'react'
+import {useEffect,useMemo,useRef,useState} from 'react'
 
 type Item={id:number;sku:string;name:string;currency:string;unit_price_minor:number;stock:number}
 type Location={code:string;name:string;terminals:{code:string;name:string}[]}
 type Sale={sale_id:number;reference:string;total_minor:number;payment_status:string}
+type Shift={id:number;status:string;opening_cash_minor:number;expected_cash_minor?:number;variance_minor?:number}
 type Shift={id:number;status:string;opening_cash_minor:number;expected_cash_minor?:number;variance_minor?:number}
 type Receipt={reference:string;created_at:string;total_minor:number;lines:{name:string;quantity:number;line_total_minor:number}[]}
 
@@ -12,7 +13,10 @@ const money=(n:number)=>new Intl.NumberFormat('en-NG',{style:'currency',currency
 export default function CanonicalPOS(){
  const [username,setUsername]=useState('')
  const [password,setPassword]=useState('')
- const [auth,setAuth]=useState('')
+ const [auth,setAuth]=useState(false)
+ const [shift,setShift]=useState<Shift|null>(null)
+ const [openingCash,setOpeningCash]=useState('0')
+ const [closingCash,setClosingCash]=useState('0')
  const [locations,setLocations]=useState<Location[]>([])
  const [location,setLocation]=useState('')
  const [terminal,setTerminal]=useState('')
@@ -29,42 +33,70 @@ export default function CanonicalPOS(){
  const attempt=useRef<{fingerprint:string;id:string}|null>(null)
  const sending=useRef(false)
  const total=useMemo(()=>cart.reduce((n,x)=>n+x.item.unit_price_minor*x.quantity,0),[cart])
- const headers=(credential=auth)=>({Authorization:'Basic '+credential})
- const api=async(path:string,credential=auth,options:RequestInit={})=>{
-  const response=await fetch('/api/transactional/'+path,{...options,headers:{...headers(credential),...options.headers},cache:'no-store'})
+ const csrf=()=>decodeURIComponent(document.cookie.split('; ').find(c=>c.startsWith('csrftoken='))?.split('=')[1]||'')
+ const api=async(path:string,options:RequestInit={})=>{
+  const response=await fetch('/api/transactional/'+path,{
+   ...options,credentials:'same-origin',cache:'no-store',
+   headers:{...(options.method&&options.method!=='GET'?{'X-CSRFToken':csrf()}:{}),...options.headers}
+  })
   const result=await response.json()
   if(!response.ok)throw Error(result.message||result.error||'Request failed')
   return result
  }
+ async function refreshShift(loc=location,term=terminal){
+  if(!loc||!term)return
+  const data=await api('pos/shifts/?'+new URLSearchParams({location_code:loc,terminal_code:term}))
+  setShift(data.shift)
+ }
+ async function initialize(){
+  try{
+   const session=await api('pos/session/')
+   if(!session.authenticated)return
+   const scope=await api('pos/scope/')
+   if(!scope.locations.length)return
+   setLocations(scope.locations)
+   const loc=scope.locations[0].code,term=scope.locations[0].terminals[0].code
+   setLocation(loc);setTerminal(term);setAuth(true)
+   await refreshShift(loc,term)
+  }catch(e){setMessage((e as Error).message)}
+ }
+ useEffect(()=>{void initialize()},[])
  async function signIn(){
   try{
-   const credential=btoa(unescape(encodeURIComponent(username+':'+password)))
-   const scope=await api('pos/scope/',credential)
+   await api('pos/session/')
+   await api('pos/login/',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})})
+   const scope=await api('pos/scope/')
    if(!scope.locations.length)throw Error('No active terminal is assigned to this operator.')
    setLocations(scope.locations)
-   setLocation(scope.locations[0].code)
-   setTerminal(scope.locations[0].terminals[0].code)
-   setAuth(credential)
-   const active=await api('pos/shifts/?'+new URLSearchParams({location_code:scope.locations[0].code,terminal_code:scope.locations[0].terminals[0].code}),credential)
-   setShift(active.shift)
-   setPassword('')
-   setMessage('Operator authenticated. Cash-only POS ready.')
+   const loc=scope.locations[0].code,term=scope.locations[0].terminals[0].code
+   setLocation(loc);setTerminal(term);setAuth(true);setPassword('')
+   await refreshShift(loc,term)
+   setMessage('Signed in using secure session cookies.')
   }catch(e){setMessage((e as Error).message)}
+ }
+ async function signOut(){
+  if(attempt.current){setMessage('Resolve the pending checkout before signing out.');return}
+  try{await api('pos/logout/',{method:'POST'})}catch(e){setMessage((e as Error).message);return}
+  setAuth(false);setCart([]);setReceipt(null);setShift(null);setSale(null)
+ }
+ function parseCash(value:string){
+  if(!/^\\d+(\\.\\d{1,2})?$/.test(value))throw Error('Enter a valid cash amount, e.g. 5000.00')
+  const [naira,kobo='']=value.split('.')
+  const amount=Number(naira)*100+Number(kobo.padEnd(2,'0'))
+  if(!Number.isSafeInteger(amount))throw Error('Cash amount exceeds supported range')
+  return amount
  }
  async function openShift(){
   try{
-   if(!/^\d+$/.test(openingCash))throw Error('Opening cash must be a whole number of naira')
-   const data=await api('pos/shifts/',auth,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location_code:location,terminal_code:terminal,opening_cash_minor:Number(openingCash)*100})})
-   setShift(data.shift);setMessage('Cashier shift opened.')
+   const data=await api('pos/shifts/',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location_code:location,terminal_code:terminal,opening_cash_minor:parseCash(openingCash)})})
+   setShift(data.shift);setMessage('Shift opened.')
   }catch(e){setMessage((e as Error).message)}
  }
  async function closeShift(){
-  if(!shift||cart.length||attempt.current)return setMessage('Clear the cart and resolve any checkout before closing.')
+  if(!shift||cart.length||attempt.current)return
   try{
-   if(!/^\d+$/.test(closingCash))throw Error('Closing cash must be a whole number of naira')
-   const data=await api('pos/shifts/'+shift.id+'/close/',auth,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({closing_cash_minor:Number(closingCash)*100})})
-   setShift(null)
-   setMessage('Shift closed. Expected: '+money(data.shift.expected_cash_minor)+'; variance: '+money(data.shift.variance_minor))
+   const data=await api(`pos/shifts/${shift.id}/close/`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({closing_cash_minor:parseCash(closingCash)})})
+   setShift(null);setMessage('Shift closed. Expected cash: '+money(data.shift.expected_cash_minor)+'; variance: '+money(data.shift.variance_minor))
   }catch(e){setMessage((e as Error).message)}
  }
  async function search(){
@@ -93,7 +125,7 @@ export default function CanonicalPOS(){
   setBusy(true)
   setMessage('Submitting cash sale...')
   try{
-   const result=await api('pos/sales/',auth,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+   const result=await api('pos/shift-sales/',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
     lines,shift_id:shift.id,location_code:location,terminal_code:terminal,currency:'NGN',amount_minor:total,
     sale_idempotency_key:'sale-'+id,payment_idempotency_key:'payment-'+id,provider_reference:'CASH-'+id
    })})
@@ -135,6 +167,12 @@ export default function CanonicalPOS(){
     <input aria-label="Opening cash in naira" value={openingCash} onChange={e=>setOpeningCash(e.target.value)} placeholder="Opening cash ₦" />
     <button style={button} disabled={busy} onClick={openShift}>Open shift</button></p>}
   </section>
+  <section style={{border:'1px solid #aaa',padding:12,marginBottom:16}}>
+   {shift?<><strong>Open shift #{shift.id}</strong> <label>Closing cash ₦ <input value={closingCash} onChange={e=>setClosingCash(e.target.value)}/></label>
+   <button style={button} disabled={busy||!!cart.length||!!attempt.current} onClick={closeShift}>Close shift</button></>:
+   <><strong>No active cashier shift.</strong> <label>Opening cash ₦ <input value={openingCash} onChange={e=>setOpeningCash(e.target.value)}/></label>
+   <button style={button} onClick={openShift}>Open shift</button></>}
+  </section>
   <section style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:24}}>
    <div>
     <h2>Products</h2>
@@ -160,6 +198,6 @@ export default function CanonicalPOS(){
     <p><button style={button} onClick={()=>window.print()}>Print page</button></p>
    </article>}
   <p role="status">{message}</p>
-  <p style={{fontSize:12}}>Pilot cash-only interface. Card, transfers, shifts, refunds and wholesale pricing require separate migration.</p>
+  <p style={{fontSize:12}}>Cash-only session POS with cashier shifts. Card, transfers, refunds and wholesale pricing require separate migration.</p>
  </main>
 }
