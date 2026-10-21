@@ -27,6 +27,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "transactional.session_middleware.POSSessionIdleTimeoutMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
 ]
 
@@ -78,3 +79,15 @@ CSRF_COOKIE_SECURE = not DEBUG
 POS_ENABLE_LEGACY_CHECKOUT = DEBUG and os.getenv("POS_ENABLE_LEGACY_CHECKOUT", "1") == "1"
 SESSION_COOKIE_AGE = int(os.getenv("POS_SESSION_AGE_SECONDS", "28800"))
 SESSION_SAVE_EVERY_REQUEST = False
+
+# POS login rate limits must be shared by all production workers.
+# Provision the database cache table with: python manage.py createcachetable
+CACHES = {"default": {
+    "BACKEND": ("django.core.cache.backends.locmem.LocMemCache" if DEBUG
+                else "django.core.cache.backends.db.DatabaseCache"),
+    "LOCATION": ("tokad-pos-dev-login-throttle" if DEBUG
+                 else os.getenv("POS_LOGIN_CACHE_TABLE", "pos_login_throttle_cache")),
+}}
+POS_LOGIN_MAX_FAILURES = int(os.getenv("POS_LOGIN_MAX_FAILURES", "5"))
+POS_LOGIN_WINDOW_SECONDS = int(os.getenv("POS_LOGIN_WINDOW_SECONDS", "900"))
+POS_SESSION_IDLE_SECONDS = int(os.getenv("POS_SESSION_IDLE_SECONDS", "900"))
