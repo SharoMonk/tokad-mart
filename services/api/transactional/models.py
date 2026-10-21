@@ -76,6 +76,31 @@ class POSOperatorTerminal(models.Model):
         ]
 
 
+class CashierShift(models.Model):
+    class Status(models.TextChoices):
+        OPEN = "OPEN"
+        CLOSED = "CLOSED"
+
+    operator = models.ForeignKey(POSOperator, on_delete=models.PROTECT, related_name="cashier_shifts")
+    location = models.ForeignKey(POSLocation, on_delete=models.PROTECT)
+    terminal = models.ForeignKey(POSTerminal, on_delete=models.PROTECT)
+    status = models.CharField(max_length=8, choices=Status.choices, default=Status.OPEN)
+    opening_cash_minor = models.PositiveBigIntegerField(default=0)
+    closing_cash_minor = models.PositiveBigIntegerField(null=True, blank=True)
+    expected_cash_minor = models.PositiveBigIntegerField(null=True, blank=True)
+    opened_at = models.DateTimeField(auto_now_add=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["terminal"],
+                condition=models.Q(status="OPEN"),
+                name="uniq_open_cashier_shift_per_terminal",
+            ),
+        ]
+
+
 class Sale(models.Model):
     class Status(models.TextChoices):
         DRAFT = "DRAFT"
@@ -84,6 +109,7 @@ class Sale(models.Model):
         PAYMENT_FAILED = "PAYMENT_FAILED"
         CANCELLED = "CANCELLED"
 
+    shift = models.ForeignKey(CashierShift, null=True, blank=True, on_delete=models.PROTECT, related_name="sales")
     reference = models.UUIDField(unique=True)
     customer = models.ForeignKey(Customer, null=True, blank=True, on_delete=models.PROTECT)
     location_code = models.CharField(max_length=64)
