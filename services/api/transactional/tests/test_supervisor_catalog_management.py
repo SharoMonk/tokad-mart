@@ -55,6 +55,9 @@ def test_supervisor_registers_product_without_inventing_stock(catalog_users):
     product = Product.objects.get(sku="RICE-NEW")
     assert created.json()["product"]["id"] == product.pk
     assert product.unit_price_minor == 250000
+    by_sku = client.get(url, {"sku": "RICE-NEW", "location_code": "CAT", "terminal_code": "CAT-01"})
+    assert by_sku.status_code == 200
+    assert by_sku.json()["product"]["id"] == product.pk
     assert InventoryItem.objects.filter(product=product).count() == 0
     assert Sale.objects.count() == 0
     assert post(client, url, product_payload()).status_code == 409
