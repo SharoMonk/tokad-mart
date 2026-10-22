@@ -3,7 +3,7 @@ from rest_framework.decorators import api_view, authentication_classes, permissi
 from rest_framework.permissions import IsAuthenticated
 from django.http import JsonResponse
 
-from .models import InventoryItem, POSOperator, Product, Sale
+from .models import InventoryItem, POSOperator, Product, ProductBarcode, Sale
 from .permissions import IsPOSOperator
 from .pos_access import POSAccessError, authorize_pos_scope
 
@@ -93,3 +93,47 @@ def pos_receipt(request, sale_id):
             "status": payment.status,
         } for payment in sale.payments.all().order_by("id")],
     })
+
+
+@api_view(["GET"])
+@authentication_classes([SessionAuthentication])
+@permission_classes([IsAuthenticated, IsPOSOperator])
+def pos_barcode(request):
+    """Exact lookup; reject conflicting SKU and physical-barcode assignments."""
+    location_code = request.query_params.get("location_code", "")
+    terminal_code = request.query_params.get("terminal_code", "")
+    try:
+        authorize_pos_scope(
+            user=request.user,
+            location_code=location_code,
+            terminal_code=terminal_code,
+        )
+    except POSAccessError as exc:
+        return JsonResponse({"error": "pos_access_denied", "message": str(exc)}, status=403)
+
+    code = request.query_params.get("code", "")
+    if not code or len(code) > 64 or code != code.strip():
+        return JsonResponse({"error": "invalid_barcode"}, status=400)
+
+    # Exact, case-sensitive comparison preserves manufacturer's barcode data,
+    # including leading zeros. SKU lookup remains supported for store labels.
+    barcode = ProductBarcode.objects.select_related("product").filter(code=code).first()
+    sku_product = Product.objects.filter(sku=code).first()
+    if barcode and sku_product and barcode.product_id != sku_product.id:
+        return JsonResponse({"error": "barcode_sku_conflict"}, status=409)
+
+    product = barcode.product if barcode else sku_product
+    if product is None or not product.is_active or product.currency != "NGN":
+        return JsonResponse({"error": "barcode_not_found"}, status=404)
+
+    stock = InventoryItem.objects.filter(
+        product=product, location_code=location_code
+    ).values_list("quantity", flat=True).first() or 0
+    return JsonResponse({"product": {
+        "id": product.id,
+        "sku": product.sku,
+        "name": product.name,
+        "currency": product.currency,
+        "unit_price_minor": product.unit_price_minor,
+        "stock": stock,
+    }})
