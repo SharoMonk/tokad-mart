@@ -150,17 +150,15 @@ export default function CanonicalPOS(){
     setMessage(item.name+' is out of stock.')
     return
    }
-   let added=false
    setCart(current=>{
     const existing=current.find(line=>line.item.id===item.id)
     if((existing?.quantity||0)>=item.stock)return current
-    added=true
     return existing
      ?current.map(line=>line.item.id===item.id?{...line,item,quantity:line.quantity+1}:line)
      :[...current,{item,quantity:1}]
    })
    setScanCode('')
-   setMessage('Scanned '+item.name+(added?' — added to cart.':' — check cart stock limit.'))
+   setMessage('Scanned '+item.name+'. Check cart quantity and available stock.')
   }catch(e){setMessage((e as Error).message)}
   finally{scanning.current=false;setScanBusy(false)}
  }
@@ -269,7 +267,7 @@ export default function CanonicalPOS(){
    </article>}
   <style>{`
    @media print {
-    @page { size: 80mm auto; margin: 3mm; }
+    @page { margin: 3mm; }
     body * { visibility: hidden !important; }
     #tokad-print-receipt, #tokad-print-receipt * { visibility: visible !important; }
     #tokad-print-receipt { position: absolute; top: 0; left: 0; width: 72mm; max-width: 72mm !important; padding: 0 !important; border: 0 !important; color: #000; background: #fff; font-size: 11px; }
