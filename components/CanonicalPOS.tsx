@@ -17,6 +17,12 @@ export default function CanonicalPOS(){
  const [reviewShiftId,setReviewShiftId]=useState('')
  const [reviewNotes,setReviewNotes]=useState('')
  const [reviewDecision,setReviewDecision]=useState('APPROVED')
+ const [newSku,setNewSku]=useState('')
+ const [newName,setNewName]=useState('')
+ const [newPrice,setNewPrice]=useState('')
+ const [mappingSku,setMappingSku]=useState('')
+ const [mappingCode,setMappingCode]=useState('')
+ const [catalogBusy,setCatalogBusy]=useState(false)
  const [shift,setShift]=useState<Shift|null>(null)
  const [openingCash,setOpeningCash]=useState('0')
  const [closingCash,setClosingCash]=useState('0')
@@ -126,6 +132,42 @@ export default function CanonicalPOS(){
    setReviewNotes('')
   }catch(e){setMessage((e as Error).message)}
  }
+ async function createCatalogProduct(){
+  if(catalogBusy)return
+  setCatalogBusy(true)
+  try{
+   const amount=parseCash(newPrice)
+   if(amount<=0)throw Error('Product price must be greater than zero.')
+   const result=await api('pos/manage/products/',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+     location_code:location,terminal_code:terminal,
+     sku:newSku.trim(),name:newName.trim(),unit_price_minor:amount,currency:'NGN'
+    })
+   })
+   setMappingSku(result.product.sku)
+   setNewSku('');setNewName('');setNewPrice('')
+   setMessage('Product registered: '+result.product.sku+'. Assign a barcode or register stock through the inventory workflow.')
+  }catch(e){setMessage((e as Error).message)}
+  finally{setCatalogBusy(false)}
+ }
+ async function assignCatalogBarcode(){
+  if(catalogBusy)return
+  setCatalogBusy(true)
+  try{
+   // Exact SKU lookup: do not infer the product from a fuzzy catalog match.
+   const data=await api('pos/catalog/?'+new URLSearchParams({q:mappingSku,location_code:location,terminal_code:terminal}))
+   const product=(data.products as Item[]).find(p=>p.sku===mappingSku)
+   if(!product)throw Error('No active NGN product found with that exact SKU.')
+   await api(`pos/manage/products/${product.id}/barcodes/`,{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({location_code:location,terminal_code:terminal,code:mappingCode})
+   })
+   setMessage('Barcode '+mappingCode+' assigned to '+mappingSku+'.')
+   setMappingCode('')
+  }catch(e){setMessage((e as Error).message)}
+  finally{setCatalogBusy(false)}
+ }
  async function search(){
   if(!query.trim()||!location||!terminal)return
   try{
@@ -227,6 +269,21 @@ export default function CanonicalPOS(){
    <select aria-label="Review decision" value={reviewDecision} onChange={e=>setReviewDecision(e.target.value)}><option value="APPROVED">Approve</option><option value="REJECTED">Reject</option></select>
    <input aria-label="Review notes" placeholder="Required review notes" value={reviewNotes} onChange={e=>setReviewNotes(e.target.value)}/>
    <button style={button} disabled={!reviewNotes.trim()} onClick={submitReview}>Submit review</button>
+  </section>}
+  {role==='SUPERVISOR'&&<section style={{padding:12,border:'1px solid #aaa',marginBottom:16}}>
+   <h2>Supervisor product and barcode management</h2>
+   <p>New products start without stock. Set available quantities through authorized inventory receiving, not the cashier cart.</p>
+   <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+    <input aria-label="New product SKU" placeholder="Unique SKU" value={newSku} onChange={e=>setNewSku(e.target.value)}/>
+    <input aria-label="New product name" placeholder="Product name" value={newName} onChange={e=>setNewName(e.target.value)}/>
+    <input aria-label="Product price in naira" placeholder="Price in ₦" value={newPrice} onChange={e=>setNewPrice(e.target.value)}/>
+    <button style={button} disabled={catalogBusy||!newSku.trim()||!newName.trim()||!newPrice.trim()} onClick={createCatalogProduct}>Register product</button>
+   </div>
+   <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:12}}>
+    <input aria-label="Product SKU to map" placeholder="Existing exact SKU" value={mappingSku} onChange={e=>setMappingSku(e.target.value)}/>
+    <input aria-label="Manufacturer barcode" placeholder="Barcode (retain leading zeros)" value={mappingCode} onChange={e=>setMappingCode(e.target.value)}/>
+    <button style={button} disabled={catalogBusy||!mappingSku.trim()||!mappingCode.trim()} onClick={assignCatalogBarcode}>Assign barcode</button>
+   </div>
   </section>}
   <section style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:24}}>
    <div>
