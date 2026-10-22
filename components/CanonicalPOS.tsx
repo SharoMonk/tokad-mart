@@ -24,6 +24,8 @@ export default function CanonicalPOS(){
  const [location,setLocation]=useState('')
  const [terminal,setTerminal]=useState('')
  const [query,setQuery]=useState('')
+ const [scanCode,setScanCode]=useState('')
+ const [scanBusy,setScanBusy]=useState(false)
  const [products,setProducts]=useState<Item[]>([])
  const [cart,setCart]=useState<{item:Item;quantity:number}[]>([])
  const [sale,setSale]=useState<Sale|null>(null)
@@ -32,6 +34,7 @@ export default function CanonicalPOS(){
  const [busy,setBusy]=useState(false)
  const attempt=useRef<{fingerprint:string;id:string}|null>(null)
  const sending=useRef(false)
+ const scanning=useRef(false)
  const total=useMemo(()=>cart.reduce((n,x)=>n+x.item.unit_price_minor*x.quantity,0),[cart])
  const csrf=()=>decodeURIComponent(document.cookie.split('; ').find(c=>c.startsWith('csrftoken='))?.split('=')[1]||'')
  const api=async(path:string,options:RequestInit={})=>{
@@ -130,6 +133,37 @@ export default function CanonicalPOS(){
    setProducts(data.products)
   }catch(e){setMessage((e as Error).message)}
  }
+ async function scanBarcode(){
+  const code=scanCode.trim()
+  if(!code||!location||!terminal||!shift||scanning.current||sending.current||attempt.current)return
+  scanning.current=true
+  setScanBusy(true)
+  try{
+   const data=await api('pos/catalog/?'+new URLSearchParams({q:code,location_code:location,terminal_code:terminal}))
+   const matches=(data.products as Item[]).filter(item=>item.sku.toLocaleLowerCase()===code.toLocaleLowerCase())
+   if(matches.length!==1){
+    setMessage('Barcode/SKU not found: '+code+'. Use product search or check the label.')
+    return
+   }
+   const item=matches[0]
+   if(item.stock<=0){
+    setMessage(item.name+' is out of stock.')
+    return
+   }
+   let added=false
+   setCart(current=>{
+    const existing=current.find(line=>line.item.id===item.id)
+    if((existing?.quantity||0)>=item.stock)return current
+    added=true
+    return existing
+     ?current.map(line=>line.item.id===item.id?{...line,item,quantity:line.quantity+1}:line)
+     :[...current,{item,quantity:1}]
+   })
+   setScanCode('')
+   setMessage('Scanned '+item.name+(added?' — added to cart.':' — check cart stock limit.'))
+  }catch(e){setMessage((e as Error).message)}
+  finally{scanning.current=false;setScanBusy(false)}
+ }
  function updateCart(item:Item,change:number){
   if(sending.current||attempt.current)return
   setCart(current=>{
@@ -205,6 +239,15 @@ export default function CanonicalPOS(){
     <h2>Products</h2>
     <input placeholder="Search name or SKU" value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')void search()}}/>
     <button style={button} onClick={search}>Search</button>
+    <div style={{margin:'12px 0',padding:12,border:'1px solid #ccc'}}>
+     <label htmlFor="pos-barcode">Barcode / SKU scanner</label>
+     <p style={{fontSize:12}}>Focus this box and scan a product. USB keyboard-wedge scanners usually send Enter after the code. Exact SKU matches add one unit.</p>
+     <input id="pos-barcode" autoComplete="off" placeholder="Scan barcode or type SKU" value={scanCode}
+      disabled={!shift||busy||scanBusy||!!attempt.current}
+      onChange={e=>setScanCode(e.target.value)}
+      onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();void scanBarcode()}}}/>
+     <button style={button} disabled={!shift||busy||scanBusy||!scanCode.trim()||!!attempt.current} onClick={scanBarcode}>Add scanned item</button>
+    </div>
     {products.map(item=><p key={item.id}>{item.name} · {item.sku} · {money(item.unit_price_minor)} · Stock {item.stock} <button style={button} disabled={!shift||item.stock<1||busy||!!attempt.current} onClick={()=>updateCart(item,1)}>Add</button></p>)}
    </div>
    <div>
@@ -218,12 +261,22 @@ export default function CanonicalPOS(){
     {sale&&<button style={button} onClick={showReceipt}>View last receipt</button>}
    </div>
   </section>
-  {receipt&&<article style={{border:'1px solid #999',padding:20,maxWidth:380}}>
+  {receipt&&<article id="tokad-print-receipt" style={{border:'1px solid #999',padding:20,maxWidth:380}}>
     <h2>TOKAD MART</h2><p>Receipt {receipt.reference}</p><p>{new Date(receipt.created_at).toLocaleString()}</p>
     {receipt.lines.map((l,i)=><p key={i}>{l.name} × {l.quantity} — {money(l.line_total_minor)}</p>)}
     <strong>Total {money(receipt.total_minor)}</strong>
-    <p><button style={button} onClick={()=>window.print()}>Print page</button></p>
+    <p className="tokad-no-print"><button style={button} onClick={()=>window.print()}>Print receipt</button></p>
    </article>}
+  <style>{`
+   @media print {
+    @page { size: 80mm auto; margin: 3mm; }
+    body * { visibility: hidden !important; }
+    #tokad-print-receipt, #tokad-print-receipt * { visibility: visible !important; }
+    #tokad-print-receipt { position: absolute; top: 0; left: 0; width: 72mm; max-width: 72mm !important; padding: 0 !important; border: 0 !important; color: #000; background: #fff; font-size: 11px; }
+    #tokad-print-receipt h2 { text-align:center; font-size: 16px; }
+    #tokad-print-receipt .tokad-no-print, #tokad-print-receipt .tokad-no-print * { display: none !important; }
+   }
+  `}</style>
   <p role="status">{message}</p>
   <p style={{fontSize:12}}>Cash-only session POS with cashier shifts. Card, transfers, refunds and wholesale pricing require separate migration.</p>
  </main>
