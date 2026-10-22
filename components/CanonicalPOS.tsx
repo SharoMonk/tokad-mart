@@ -155,10 +155,8 @@ export default function CanonicalPOS(){
   if(catalogBusy)return
   setCatalogBusy(true)
   try{
-   // Exact SKU lookup: do not infer the product from a fuzzy catalog match.
-   const data=await api('pos/catalog/?'+new URLSearchParams({q:mappingSku,location_code:location,terminal_code:terminal}))
-   const product=(data.products as Item[]).find(p=>p.sku===mappingSku)
-   if(!product)throw Error('No active NGN product found with that exact SKU.')
+   const data=await api('pos/manage/products/?'+new URLSearchParams({sku:mappingSku,location_code:location,terminal_code:terminal}))
+   const product=data.product as Item
    await api(`pos/manage/products/${product.id}/barcodes/`,{
     method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({location_code:location,terminal_code:terminal,code:mappingCode})
