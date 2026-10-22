@@ -56,17 +56,22 @@ def _serialize(product):
     }
 
 
-@api_view(["POST"])
+@api_view(["GET", "POST"])
 @authentication_classes([SessionAuthentication])
 @permission_classes([IsAuthenticated, IsPOSOperator])
 def supervisor_product_create(request):
-    data = _body(request)
+    data = dict(request.query_params.items()) if request.method == "GET" else _body(request)
     if data is None:
         return _error("invalid_request")
     scope = _supervisor(request, data)
     if scope is None:
         return _error("supervisor_scope_required", 403)
     sku = data.get("sku")
+    if request.method == "GET":
+        if not _valid_code(sku):
+            return _error("invalid_sku")
+        product = Product.objects.filter(sku=sku).first()
+        return JsonResponse({"product": _serialize(product)}) if product else _error("product_not_found", 404)
     name = data.get("name")
     price = data.get("unit_price_minor")
     if not _valid_code(sku) or not _text(name, 255):
