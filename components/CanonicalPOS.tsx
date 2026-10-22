@@ -139,13 +139,8 @@ export default function CanonicalPOS(){
   scanning.current=true
   setScanBusy(true)
   try{
-   const data=await api('pos/catalog/?'+new URLSearchParams({q:code,location_code:location,terminal_code:terminal}))
-   const matches=(data.products as Item[]).filter(item=>item.sku.toLocaleLowerCase()===code.toLocaleLowerCase())
-   if(matches.length!==1){
-    setMessage('Barcode/SKU not found: '+code+'. Use product search or check the label.')
-    return
-   }
-   const item=matches[0]
+   const data=await api('pos/barcode/?'+new URLSearchParams({code,location_code:location,terminal_code:terminal}))
+   const item=data.product as Item
    if(item.stock<=0){
     setMessage(item.name+' is out of stock.')
     return
@@ -240,7 +235,7 @@ export default function CanonicalPOS(){
     <button style={button} onClick={search}>Search</button>
     <div style={{margin:'12px 0',padding:12,border:'1px solid #ccc'}}>
      <label htmlFor="pos-barcode">Barcode / SKU scanner</label>
-     <p style={{fontSize:12}}>Focus this box and scan a product. USB keyboard-wedge scanners usually send Enter after the code. Exact SKU matches add one unit.</p>
+     <p style={{fontSize:12}}>Focus this box and scan a product. USB keyboard-wedge scanners usually send Enter after the code. Exact barcode or SKU matches add one unit.</p>
      <input id="pos-barcode" autoComplete="off" placeholder="Scan barcode or type SKU" value={scanCode}
       disabled={!shift||busy||scanBusy||!!attempt.current}
       onChange={e=>setScanCode(e.target.value)}
