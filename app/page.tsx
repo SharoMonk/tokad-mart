@@ -1,2 +1,3 @@
-import POS from '../components/POS'
-export default function Home(){return <POS/>}
+import CanonicalPOS from '../components/CanonicalPOS'
+
+export default function Home(){return <CanonicalPOS/>}
