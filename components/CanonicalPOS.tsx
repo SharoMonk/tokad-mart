@@ -187,6 +187,7 @@ export default function CanonicalPOS(){
    })})
    attempt.current=null
    setSale(result)
+   setReceipt(null)
    setCart([])
    setMessage('Sale completed: '+result.reference)
   }catch(e){setMessage((e as Error).message+' — if the request may have reached the server, retry the same sale without changing the cart.')}
