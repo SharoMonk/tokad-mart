@@ -10,6 +10,17 @@ class Product(models.Model):
     is_active = models.BooleanField(default=True)
 
 
+class ProductBarcode(models.Model):
+    """One physical barcode maps to one canonical product; preserve leading zeros."""
+    product = models.ForeignKey(
+        Product, on_delete=models.PROTECT, related_name="barcodes"
+    )
+    code = models.CharField(max_length=64, unique=True)
+
+    def __str__(self):
+        return self.code
+
+
 class InventoryItem(models.Model):
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="inventory_items")
     location_code = models.CharField(max_length=64)
