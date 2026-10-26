@@ -240,8 +240,8 @@ class OutboxEvent(models.Model):
 
     class Meta:
         indexes = [
-            models.Index(fields=["status", "available_at"]),
-            models.Index(fields=["aggregate_type", "aggregate_id"]),
+            models.Index(fields=["status", "available_at"], name="transaction_status_c5bc91_idx"),
+            models.Index(fields=["aggregate_type", "aggregate_id"], name="transaction_aggrega_c37442_idx"),
         ]
 
 
