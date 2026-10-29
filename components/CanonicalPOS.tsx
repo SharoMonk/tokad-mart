@@ -385,7 +385,7 @@ export default function CanonicalPOS(){
     body:JSON.stringify({...payload,idempotency_key:receiptAttempt.current.key})
    })
    receiptAttempt.current=null
-   setMessage('Goods receipt '+(result.replayed?'confirmed':'recorded')+'; PO '+result.order.reference+' is '+result.order.status)
+   setMessage('Goods receipt #'+result.receipt_id+' '+(result.replayed?'confirmed':'recorded')+'; PO '+result.order.reference+' is '+result.order.status+'. Enter receipt ID '+result.receipt_id+' when matching the supplier invoice.')
    setReceiptQuantity('');setReceiptReference('')
    await refreshProcurement()
   }catch(e){setMessage((e as Error).message+' — if delivery was submitted, retry unchanged or verify the order before repeating.')}
@@ -651,13 +651,13 @@ export default function CanonicalPOS(){
     <h2>TOKAD MART</h2><p>Receipt {receipt.reference}</p><p>{new Date(receipt.created_at).toLocaleString()}</p>
     {receipt.lines.map((l,i)=><p key={i}>{l.name} × {l.quantity} — {money(l.line_total_minor)}</p>)}
     <strong>Total {money(receipt.total_minor)}</strong>
-    <p className="tokad-no-print"><button style={button} onClick={()=>window.print()}>Print receipt</button></p>
+    <p className="tokad-no-print"><button style={button} disabled={!!printOrder} onClick={()=>window.print()}>Print receipt</button></p>
    </article>}
   <style>{`
    @media print {
     @page { margin: 3mm; }
     body * { visibility: hidden !important; }
-    #tokad-print-receipt, #tokad-print-receipt *, #tokad-print-purchase-order, #tokad-print-purchase-order * { visibility: visible !important; }
+    ${printOrder ? '#tokad-print-purchase-order, #tokad-print-purchase-order *' : '#tokad-print-receipt, #tokad-print-receipt *'} { visibility: visible !important; }
     #tokad-print-receipt { position: absolute; top: 0; left: 0; width: 72mm; max-width: 72mm !important; padding: 0 !important; border: 0 !important; color: #000; background: #fff; font-size: 11px; }
     #tokad-print-receipt h2 { text-align:center; font-size: 16px; }
     #tokad-print-purchase-order { position: absolute; left:0; top:0; width: 190mm; background:white; color:black; }
