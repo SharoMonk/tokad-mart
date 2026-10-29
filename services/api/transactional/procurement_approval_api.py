@@ -145,12 +145,32 @@ def accounts_payable_register(request):
     invoices = SupplierInvoice.objects.filter(
         receipt__order__location=scope.location
     ).select_related("supplier").order_by("-id")[:200]
-    rows = [{
-        "id": item.pk, "number": item.number, "supplier_code": item.supplier.code,
-        "amount_minor": item.amount_minor, "expected_minor": item.expected_minor,
-        "status": item.status,
-        "payment_status": "NOT_TRACKED",
-    } for item in invoices]
+    from .models import SupplierPaymentEvidence
+    rows = []
+    for item in invoices:
+        entries = list(item.payment_evidence.all())
+        verified = sum(
+            p.amount_minor for p in entries
+            if p.status == SupplierPaymentEvidence.Status.VERIFIED
+        )
+        pending = sum(
+            p.amount_minor for p in entries
+            if p.status == SupplierPaymentEvidence.Status.RECORDED
+        )
+        status = (
+            "NOT_TRACKED" if not entries else
+            "MANUALLY_RECONCILED" if verified == item.amount_minor else
+            "PENDING_REVIEW" if pending else "PARTIAL"
+        )
+        rows.append({
+            "id": item.pk, "number": item.number,
+            "supplier_code": item.supplier.code,
+            "amount_minor": item.amount_minor, "expected_minor": item.expected_minor,
+            "status": item.status, "payment_status": status,
+            "verified_evidence_minor": verified,
+            "pending_review_minor": pending,
+            "remaining_unverified_minor": max(0, item.amount_minor - verified),
+        })
     return JsonResponse({
         "currency": "NGN", "rows": rows,
         "matched_unpaid_or_unverified_minor": sum(
@@ -159,5 +179,5 @@ def accounts_payable_register(request):
         "exception_minor": sum(
             row["amount_minor"] for row in rows if row["status"] == "EXCEPTION"
         ),
-        "note": "Amounts are recorded invoice exposure, not verified unpaid liabilities. Supplier payment posting is not implemented.",
+        "note": "Verified payment evidence reflects manual review of external documents, not bank API confirmation; totals are limited to the first 200 invoices.",
     })
