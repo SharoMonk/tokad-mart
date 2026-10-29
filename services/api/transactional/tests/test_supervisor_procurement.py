@@ -20,6 +20,7 @@ def users(db):
     for username, role in (
         ("proc-supervisor", POSOperator.Role.SUPERVISOR),
         ("proc-cashier", POSOperator.Role.OPERATOR),
+        ("proc-approver", POSOperator.Role.SUPERVISOR),
     ):
         user = get_user_model().objects.create_user(
             username, password="example", is_staff=True,
@@ -43,7 +44,7 @@ def scoped(**kwargs):
     return {"location_code": "PROC", "terminal_code": "P1", **kwargs}
 
 
-def initialize(client):
+def initialize(client, approver):
     supplier = post(client, "/api/transactional/pos/manage/suppliers/", scoped(
         code="SUP-ONE", name="First Supplier", contact="012345",
     ))
@@ -56,12 +57,15 @@ def initialize(client):
         ],
     ))
     assert order.status_code == 201, order.content
-    return order.json()["order"]
+    created = order.json()["order"]
+    approval = post(approver, f"/api/transactional/pos/manage/purchase-orders/{created[\'id\']}/approve/", scoped(note="Reviewed purchase order and pricing"))
+    assert approval.status_code == 201, approval.content
+    return created
 
 
 @pytest.mark.django_db
 def test_supervisor_only_supplier_and_po_creation(users):
-    manager, cashier = users
+    manager, cashier, approver = users
     suppliers_url = "/api/transactional/pos/manage/suppliers/"
     assert post(cashier, suppliers_url, scoped(code="X", name="No")).status_code == 403
     assert post(manager, suppliers_url, scoped(
@@ -84,8 +88,8 @@ def test_supervisor_only_supplier_and_po_creation(users):
 
 @pytest.mark.django_db
 def test_partial_receipts_post_to_canonical_inventory_once(users):
-    manager, cashier = users
-    order = initialize(manager)
+    manager, cashier, approver = users
+    order = initialize(manager, approver)
     url = f"/api/transactional/pos/manage/purchase-orders/{order['id']}/receive/"
     rice, soap = order["lines"]
     request = scoped(
