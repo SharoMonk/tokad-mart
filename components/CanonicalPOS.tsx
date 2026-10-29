@@ -44,7 +44,7 @@ export default function CanonicalPOS(){
  const [supplierPayments,setSupplierPayments]=useState<{id:number;invoice_id:number;reference:string;amount_minor:number;status:string}[]>([])
  const [supplierReconciliation,setSupplierReconciliation]=useState<{invoice_id:number;invoice_number:string;verified_evidence_minor:number;pending_review_minor:number;remaining_unverified_minor:number;review_status:string}[]>([])
  const paymentAttempt=useRef<{fingerprint:string;key:string}|null>(null)
- const [payables,setPayables]=useState<{number:string;supplier_code:string;amount_minor:number;expected_minor:number;status:string}[]>([])
+ const [payables,setPayables]=useState<{id:number;number:string;supplier_code:string;amount_minor:number;expected_minor:number;status:string}[]>([])
  const [printOrder,setPrintOrder]=useState<ProcurementOrder|null>(null)
  const [poLines,setPoLines]=useState('')
  const [orders,setOrders]=useState<ProcurementOrder[]>([])
