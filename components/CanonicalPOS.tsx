@@ -23,6 +23,23 @@ export default function CanonicalPOS(){
  const [mappingSku,setMappingSku]=useState('')
  const [mappingCode,setMappingCode]=useState('')
  const [catalogBusy,setCatalogBusy]=useState(false)
+ type ProcurementLine={id:number;sku:string;name:string;quantity_ordered:number;quantity_received:number;quantity_outstanding:number;unit_cost_minor:number}
+ type ProcurementOrder={id:number;reference:string;supplier_code:string;status:string;lines:ProcurementLine[]}
+ const [suppliers,setSuppliers]=useState<{code:string;name:string}[]>([])
+ const [supplierCode,setSupplierCode]=useState('')
+ const [supplierName,setSupplierName]=useState('')
+ const [supplierContact,setSupplierContact]=useState('')
+ const [poSupplier,setPoSupplier]=useState('')
+ const [poReference,setPoReference]=useState('')
+ const [poLines,setPoLines]=useState('')
+ const [orders,setOrders]=useState<ProcurementOrder[]>([])
+ const [receiptOrderId,setReceiptOrderId]=useState('')
+ const [receiptLineId,setReceiptLineId]=useState('')
+ const [receiptQuantity,setReceiptQuantity]=useState('')
+ const [receiptReference,setReceiptReference]=useState('')
+ const [procurementBusy,setProcurementBusy]=useState(false)
+ const receiptAttempt=useRef<{fingerprint:string;key:string}|null>(null)
+ const [replenishment,setReplenishment]=useState<{sku:string;current_stock:number;outstanding_order_units:number;reorder_gap_units:number}[]>([])
  const [stockSku,setStockSku]=useState('')
  const [stockOperation,setStockOperation]=useState('RECEIVE')
  const [stockQuantity,setStockQuantity]=useState('')
@@ -254,6 +271,82 @@ export default function CanonicalPOS(){
   }catch(e){setMessage((e as Error).message+' — if uncertain, retry unchanged or verify ledger before repeating.')}
   finally{setCountPending(false)}
  }
+ async function refreshProcurement(){
+  try{
+   const params=new URLSearchParams({location_code:location,terminal_code:terminal})
+   const [supply,po,report]=await Promise.all([
+    api('pos/manage/suppliers/?'+params),
+    api('pos/manage/purchase-orders/?'+params),
+    api('pos/manage/replenishment/?'+new URLSearchParams({location_code:location,terminal_code:terminal,threshold:reportThreshold}))
+   ])
+   setSuppliers(supply.suppliers)
+   setOrders(po.orders)
+   setReplenishment(report.products)
+  }catch(e){setMessage((e as Error).message)}
+ }
+ async function registerSupplier(){
+  if(procurementBusy)return
+  setProcurementBusy(true)
+  try{
+   const result=await api('pos/manage/suppliers/',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({location_code:location,terminal_code:terminal,code:supplierCode.trim(),name:supplierName.trim(),contact:supplierContact.trim()})
+   })
+   setMessage('Supplier registered: '+result.supplier.code)
+   setSupplierCode('');setSupplierName('');setSupplierContact('')
+   await refreshProcurement()
+  }catch(e){setMessage((e as Error).message)}
+  finally{setProcurementBusy(false)}
+ }
+ async function createPurchaseOrder(){
+  if(procurementBusy)return
+  let lines:{sku:string;quantity:number;unit_cost_minor:number}[]
+  try{
+   lines=poLines.split('\\n').filter(l=>l.trim()).map(line=>{
+    const parts=line.split(',').map(x=>x.trim())
+    if(parts.length!==3||!/^\\d+$/.test(parts[1]))throw Error('Use one line per SKU: SKU, quantity, unit cost in naira')
+    const quantity=Number(parts[1])
+    if(!Number.isSafeInteger(quantity)||quantity<=0)throw Error('Ordered quantity must be positive.')
+    return {sku:parts[0],quantity,unit_cost_minor:parseCash(parts[2])}
+   })
+   if(!lines.length||lines.some(l=>l.unit_cost_minor<=0))throw Error('Enter at least one line with positive unit cost.')
+  }catch(e){setMessage((e as Error).message);return}
+  setProcurementBusy(true)
+  try{
+   const result=await api('pos/manage/purchase-orders/',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({location_code:location,terminal_code:terminal,supplier_code:poSupplier,reference:poReference.trim(),lines})
+   })
+   setMessage('Purchase order created: '+result.order.reference)
+   setPoReference('');setPoLines('')
+   await refreshProcurement()
+  }catch(e){setMessage((e as Error).message)}
+  finally{setProcurementBusy(false)}
+ }
+ async function receivePurchaseOrder(){
+  if(procurementBusy)return
+  const quantity=Number(receiptQuantity),orderId=Number(receiptOrderId),lineId=Number(receiptLineId)
+  if(!Number.isSafeInteger(quantity)||quantity<=0||!Number.isSafeInteger(lineId)||lineId<=0||!receiptReference.trim()){setMessage('Select an order line, enter positive quantity and delivery note reference.');return}
+  const payload={location_code:location,terminal_code:terminal,reference:receiptReference.trim(),lines:[{line_id:lineId,quantity}]}
+  const fingerprint=JSON.stringify({orderId,...payload})
+  if(receiptAttempt.current&&receiptAttempt.current.fingerprint!==fingerprint){
+   setMessage('Unresolved goods receipt. Restore original order, line, quantity and reference before retrying.')
+   return
+  }
+  if(!receiptAttempt.current)receiptAttempt.current={fingerprint,key:crypto.randomUUID()}
+  setProcurementBusy(true)
+  try{
+   const result=await api(`pos/manage/purchase-orders/${orderId}/receive/`,{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({...payload,idempotency_key:receiptAttempt.current.key})
+   })
+   receiptAttempt.current=null
+   setMessage('Goods receipt '+(result.replayed?'confirmed':'recorded')+'; PO '+result.order.reference+' is '+result.order.status)
+   setReceiptQuantity('');setReceiptReference('')
+   await refreshProcurement()
+  }catch(e){setMessage((e as Error).message+' — if delivery was submitted, retry unchanged or verify the order before repeating.')}
+  finally{setProcurementBusy(false)}
+ }
  async function search(){
   if(!query.trim()||!location||!terminal)return
   try{
@@ -413,6 +506,48 @@ export default function CanonicalPOS(){
     <input aria-label="Stocktake notes" placeholder="Reason for variance" value={stockCountNotes} disabled={countPending} onChange={e=>setStockCountNotes(e.target.value)}/>
     <button style={button} disabled={countPending||!stockCountReference.trim()||!stockCountNotes.trim()} onClick={reconcileCount}>Apply counted variance</button>
    </div>}
+  </section>}
+  {role==='SUPERVISOR'&&<section style={{padding:12,border:'1px solid #aaa',marginBottom:16}}>
+   <h2>Suppliers, purchase orders and goods received</h2>
+   <button style={button} onClick={refreshProcurement} disabled={procurementBusy}>Refresh suppliers, orders and replenishment</button>
+   <h3>Register supplier</h3>
+   <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+    <input aria-label="Supplier code" placeholder="Supplier code" value={supplierCode} onChange={e=>setSupplierCode(e.target.value)}/>
+    <input aria-label="Supplier name" placeholder="Supplier name" value={supplierName} onChange={e=>setSupplierName(e.target.value)}/>
+    <input aria-label="Supplier contact" placeholder="Contact (optional)" value={supplierContact} onChange={e=>setSupplierContact(e.target.value)}/>
+    <button style={button} disabled={procurementBusy||!supplierCode.trim()||!supplierName.trim()} onClick={registerSupplier}>Create supplier</button>
+   </div>
+   <h3>Create purchase order</h3>
+   <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+    <select aria-label="Purchase order supplier" value={poSupplier} onChange={e=>setPoSupplier(e.target.value)}>
+     <option value="">Select supplier</option>
+     {suppliers.map(s=><option key={s.code} value={s.code}>{s.name} ({s.code})</option>)}
+    </select>
+    <input aria-label="Purchase order reference" placeholder="Unique PO reference" value={poReference} onChange={e=>setPoReference(e.target.value)}/>
+    <textarea aria-label="Purchase order lines" rows={3} placeholder={'One line per item: SKU, quantity, unit cost in ₦\\nRICE-001, 20, 1500.00'} value={poLines} onChange={e=>setPoLines(e.target.value)}/>
+    <button style={button} disabled={procurementBusy||!poSupplier||!poReference.trim()||!poLines.trim()} onClick={createPurchaseOrder}>Create purchase order</button>
+   </div>
+   <h3>Receive purchase order (partial deliveries supported)</h3>
+   <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+    <select aria-label="Goods receipt purchase order" value={receiptOrderId} onChange={e=>{setReceiptOrderId(e.target.value);setReceiptLineId('')}} disabled={procurementBusy||!!receiptAttempt.current}>
+     <option value="">Select open purchase order</option>
+     {orders.filter(o=>o.status!=='RECEIVED').map(o=><option key={o.id} value={o.id}>{o.reference} · {o.status}</option>)}
+    </select>
+    <select aria-label="Goods receipt line" value={receiptLineId} onChange={e=>setReceiptLineId(e.target.value)} disabled={procurementBusy||!!receiptAttempt.current}>
+     <option value="">Select outstanding line</option>
+     {orders.find(o=>String(o.id)===receiptOrderId)?.lines.filter(l=>l.quantity_outstanding>0).map(l=><option key={l.id} value={l.id}>{l.sku} · outstanding {l.quantity_outstanding}</option>)}
+    </select>
+    <input aria-label="Goods received units" placeholder="Units received" value={receiptQuantity} disabled={procurementBusy} onChange={e=>setReceiptQuantity(e.target.value)}/>
+    <input aria-label="Supplier delivery reference" placeholder="Delivery note / GRN reference" value={receiptReference} disabled={procurementBusy} onChange={e=>setReceiptReference(e.target.value)}/>
+    <button style={button} disabled={procurementBusy||!receiptOrderId||!receiptLineId||!receiptQuantity||!receiptReference.trim()} onClick={receivePurchaseOrder}>Record goods received</button>
+   </div>
+   <p>Goods receipts post inventory movements. Do not also record the same delivery through manual stock receiving.</p>
+   <h3>Open purchase orders</h3>
+   {orders.filter(o=>o.status!=='RECEIVED').map(o=><p key={o.id}>{o.reference} · {o.supplier_code} · {o.status}: {o.lines.map(l=>l.sku+' '+l.quantity_received+'/'+l.quantity_ordered).join(', ')}</p>)}
+   <h3>Replenishment report (threshold {reportThreshold})</h3>
+   <div style={{maxHeight:200,overflowY:'auto'}}>
+    {replenishment.map(p=><p key={p.sku}>{p.sku}: on hand {p.current_stock}, on order {p.outstanding_order_units}, uncovered target gap {p.reorder_gap_units}</p>)}
+   </div>
   </section>}
   <section style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:24}}>
    <div>
