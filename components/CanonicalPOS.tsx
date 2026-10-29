@@ -29,6 +29,16 @@ export default function CanonicalPOS(){
  const [stockReference,setStockReference]=useState('')
  const [stockNotes,setStockNotes]=useState('')
  const [stockBusy,setStockBusy]=useState(false)
+ const [reportThreshold,setReportThreshold]=useState('5')
+ const [reportRows,setReportRows]=useState<{id:number;sku:string;name:string;unit_price_minor:number;current_stock:number;low_stock:boolean}[]>([])
+ const [reportMode,setReportMode]=useState('low')
+ const [stockCountSku,setStockCountSku]=useState('')
+ const [stockCountExpected,setStockCountExpected]=useState<number|null>(null)
+ const [stockCountActual,setStockCountActual]=useState('')
+ const [stockCountReference,setStockCountReference]=useState('')
+ const [stockCountNotes,setStockCountNotes]=useState('')
+ const [countPending,setCountPending]=useState(false)
+ const countAttempt=useRef<{fingerprint:string;key:string}|null>(null)
  const stockAttempt=useRef<{fingerprint:string;key:string}|null>(null)
  const [shift,setShift]=useState<Shift|null>(null)
  const [openingCash,setOpeningCash]=useState('0')
@@ -202,6 +212,48 @@ export default function CanonicalPOS(){
   }catch(e){setMessage((e as Error).message+' — retry unchanged fields if the update may have reached the server.')}
   finally{setStockBusy(false)}
  }
+ async function loadInventoryReport(){
+  try{
+   const data=await api('pos/manage/inventory-report/?'+new URLSearchParams({
+    location_code:location,terminal_code:terminal,
+    threshold:reportThreshold,mode:reportMode
+   }))
+   setReportRows(data.products)
+   setMessage('Inventory report refreshed for '+location+'. Showing up to 200 products.')
+  }catch(e){setMessage((e as Error).message)}
+ }
+ async function reconcileCount(){
+  if(countPending||stockCountExpected===null)return
+  const count=Number(stockCountActual)
+  if(!/^\\d+$/.test(stockCountActual)||!Number.isSafeInteger(count)){setMessage('Enter a nonnegative whole-number physical count.');return}
+  const delta=count-stockCountExpected
+  if(delta===0){setMessage('Physical stock matches recorded stock. No adjustment needed.');return}
+  if(Math.abs(delta)>1000000){setMessage('Count variance exceeds the adjustment limit.');return}
+  const payload={
+   location_code:location,terminal_code:terminal,sku:stockCountSku,
+   operation:'ADJUST',quantity:delta,expected_quantity:stockCountExpected,
+   reference:stockCountReference.trim(),notes:stockCountNotes.trim()
+  }
+  const fingerprint=JSON.stringify(payload)
+  if(countAttempt.current&&countAttempt.current.fingerprint!==fingerprint){
+   setMessage('Unresolved stock count request. Restore the same fields before retrying.')
+   return
+  }
+  if(!countAttempt.current)countAttempt.current={fingerprint,key:crypto.randomUUID()}
+  setCountPending(true)
+  try{
+   const result=await api('pos/manage/stock/',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({...payload,idempotency_key:countAttempt.current.key})
+   })
+   countAttempt.current=null
+   setMessage('Stocktake recorded: '+stockCountSku+' now has '+result.quantity_after+' units.')
+   setStockCountSku('');setStockCountExpected(null);setStockCountActual('')
+   setStockCountReference('');setStockCountNotes('')
+   await loadInventoryReport()
+  }catch(e){setMessage((e as Error).message+' — if uncertain, retry unchanged or verify ledger before repeating.')}
+  finally{setCountPending(false)}
+ }
  async function search(){
   if(!query.trim()||!location||!terminal)return
   try{
@@ -333,6 +385,34 @@ export default function CanonicalPOS(){
     <input aria-label="Stock operation reason" placeholder="Required explanation" value={stockNotes} disabled={stockBusy} onChange={e=>setStockNotes(e.target.value)}/>
     <button style={button} disabled={stockBusy||!stockSku.trim()||!stockQuantity.trim()||!stockReference.trim()||!stockNotes.trim()} onClick={submitStockOperation}>Record stock movement</button>
    </div>
+  </section>}
+  {role==='SUPERVISOR'&&<section style={{padding:12,border:'1px solid #aaa',marginBottom:16}}>
+   <h2>Inventory report, low-stock alerts and physical stocktake</h2>
+   <label>Low-stock threshold <input aria-label="Low stock threshold" value={reportThreshold} onChange={e=>setReportThreshold(e.target.value)}/></label>
+   <select aria-label="Inventory report mode" value={reportMode} onChange={e=>setReportMode(e.target.value)}>
+    <option value="low">Low stock only</option><option value="all">All active products</option>
+   </select>
+   <button style={button} onClick={loadInventoryReport}>Refresh inventory report</button>
+   <p>Alerts are evaluated when you refresh; they are not background notifications. The report displays at most 200 SKUs.</p>
+   <div style={{maxHeight:250,overflowY:'auto'}}>
+    <table style={{width:'100%',textAlign:'left'}}>
+     <thead><tr><th>SKU</th><th>Product</th><th>Units</th><th>Status</th><th>Count</th></tr></thead>
+     <tbody>{reportRows.map(item=><tr key={item.id}>
+      <td>{item.sku}</td><td>{item.name}</td><td>{item.current_stock}</td>
+      <td>{item.low_stock?'Low stock':'OK'}</td>
+      <td><button style={button} disabled={!!countAttempt.current} onClick={()=>{
+       setStockCountSku(item.sku);setStockCountExpected(item.current_stock);setStockCountActual(String(item.current_stock))
+      }}>Stocktake</button></td>
+     </tr>)}</tbody>
+    </table>
+   </div>
+   {stockCountExpected!==null&&<div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:12}}>
+    <p>Count {stockCountSku} · recorded baseline {stockCountExpected}</p>
+    <input aria-label="Physical count" value={stockCountActual} disabled={countPending} onChange={e=>setStockCountActual(e.target.value)}/>
+    <input aria-label="Stocktake reference" placeholder="Count sheet reference" value={stockCountReference} disabled={countPending} onChange={e=>setStockCountReference(e.target.value)}/>
+    <input aria-label="Stocktake notes" placeholder="Reason for variance" value={stockCountNotes} disabled={countPending} onChange={e=>setStockCountNotes(e.target.value)}/>
+    <button style={button} disabled={countPending||!stockCountReference.trim()||!stockCountNotes.trim()} onClick={reconcileCount}>Apply counted variance</button>
+   </div>}
   </section>}
   <section style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:24}}>
    <div>
