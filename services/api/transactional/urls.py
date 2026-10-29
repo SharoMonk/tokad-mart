@@ -5,6 +5,7 @@ from .pos_read_api import pos_catalog, pos_receipt, pos_scope, pos_barcode
 from .shift_api import cashier_shifts, cashier_shift_close
 from .supervisor_review_api import supervisor_reconciliation
 from .supervisor_catalog_api import supervisor_product_create, supervisor_product_barcodes
+from .supervisor_inventory_api import supervisor_stock_operation
 from .session_api import pos_session, pos_login, pos_logout
 from .shift_sales_api import shift_cash_sale
 from .views import (
@@ -17,6 +18,7 @@ from .views import (
 
 
 urlpatterns = [
+    path("pos/manage/stock/", supervisor_stock_operation, name="supervisor-stock-operation"),
     path("pos/manage/products/", supervisor_product_create, name="supervisor-product-create"),
     path("pos/manage/products/<int:product_id>/barcodes/", supervisor_product_barcodes, name="supervisor-product-barcodes"),
     path("pos/barcode/", pos_barcode, name="pos-barcode"),
