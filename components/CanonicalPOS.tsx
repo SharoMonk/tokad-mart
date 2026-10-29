@@ -23,6 +23,13 @@ export default function CanonicalPOS(){
  const [mappingSku,setMappingSku]=useState('')
  const [mappingCode,setMappingCode]=useState('')
  const [catalogBusy,setCatalogBusy]=useState(false)
+ const [stockSku,setStockSku]=useState('')
+ const [stockOperation,setStockOperation]=useState('RECEIVE')
+ const [stockQuantity,setStockQuantity]=useState('')
+ const [stockReference,setStockReference]=useState('')
+ const [stockNotes,setStockNotes]=useState('')
+ const [stockBusy,setStockBusy]=useState(false)
+ const stockAttempt=useRef<{fingerprint:string;key:string}|null>(null)
  const [shift,setShift]=useState<Shift|null>(null)
  const [openingCash,setOpeningCash]=useState('0')
  const [closingCash,setClosingCash]=useState('0')
@@ -166,6 +173,35 @@ export default function CanonicalPOS(){
   }catch(e){setMessage((e as Error).message)}
   finally{setCatalogBusy(false)}
  }
+ async function submitStockOperation(){
+  if(stockBusy)return
+  const delta=Number(stockQuantity)
+  if(!Number.isSafeInteger(delta)||delta===0||Math.abs(delta)>1000000){setMessage('Quantity must be a nonzero whole number up to 1,000,000.');return}
+  if(stockOperation==='RECEIVE'&&delta<0){setMessage('Receiving quantity must be positive.');return}
+  const payload={
+   location_code:location,terminal_code:terminal,
+   sku:stockSku.trim(),operation:stockOperation,quantity:delta,
+   reference:stockReference.trim(),notes:stockNotes.trim()
+  }
+  const fingerprint=JSON.stringify(payload)
+  if(stockAttempt.current&&stockAttempt.current.fingerprint!==fingerprint){
+   setMessage('An inventory request is unresolved. Restore its original fields and retry to avoid double counting.')
+   return
+  }
+  if(!stockAttempt.current)stockAttempt.current={fingerprint,key:crypto.randomUUID()}
+  setStockBusy(true)
+  try{
+   const result=await api('pos/manage/stock/',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({...payload,idempotency_key:stockAttempt.current.key})
+   })
+   stockAttempt.current=null
+   setStockQuantity('');setStockReference('');setStockNotes('')
+   setMessage('Stock '+(result.replayed?'confirmed':'recorded')+
+    ': '+payload.sku+' now has '+result.quantity_after+' units at '+location+'.')
+  }catch(e){setMessage((e as Error).message+' — retry unchanged fields if the update may have reached the server.')}
+  finally{setStockBusy(false)}
+ }
  async function search(){
   if(!query.trim()||!location||!terminal)return
   try{
@@ -281,6 +317,21 @@ export default function CanonicalPOS(){
     <input aria-label="Product SKU to map" placeholder="Existing exact SKU" value={mappingSku} onChange={e=>setMappingSku(e.target.value)}/>
     <input aria-label="Manufacturer barcode" placeholder="Barcode (retain leading zeros)" value={mappingCode} onChange={e=>setMappingCode(e.target.value)}/>
     <button style={button} disabled={catalogBusy||!mappingSku.trim()||!mappingCode.trim()} onClick={assignCatalogBarcode}>Assign barcode</button>
+   </div>
+  </section>}
+  {role==='SUPERVISOR'&&<section style={{padding:12,border:'1px solid #aaa',marginBottom:16}}>
+   <h2>Supervisor stock receiving and adjustment</h2>
+   <p>Each operation creates an auditable inventory movement. Receive stock with positive quantities; adjustments can add or remove stock.</p>
+   {stockAttempt.current&&<p role="alert">An inventory update may be pending. Do not modify these fields until the original request is confirmed.</p>}
+   <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+    <input aria-label="Stock product SKU" placeholder="Exact product SKU" value={stockSku} disabled={stockBusy} onChange={e=>setStockSku(e.target.value)}/>
+    <select aria-label="Stock operation" value={stockOperation} disabled={stockBusy} onChange={e=>setStockOperation(e.target.value)}>
+     <option value="RECEIVE">Receive goods</option><option value="ADJUST">Adjust stock</option>
+    </select>
+    <input aria-label="Stock quantity change" placeholder="Quantity (e.g. 20 or -2)" value={stockQuantity} disabled={stockBusy} onChange={e=>setStockQuantity(e.target.value)}/>
+    <input aria-label="Stock reference" placeholder="Supplier invoice or adjustment reference" value={stockReference} disabled={stockBusy} onChange={e=>setStockReference(e.target.value)}/>
+    <input aria-label="Stock operation reason" placeholder="Required explanation" value={stockNotes} disabled={stockBusy} onChange={e=>setStockNotes(e.target.value)}/>
+    <button style={button} disabled={stockBusy||!stockSku.trim()||!stockQuantity.trim()||!stockReference.trim()||!stockNotes.trim()} onClick={submitStockOperation}>Record stock movement</button>
    </div>
   </section>}
   <section style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:24}}>
