@@ -6,6 +6,7 @@ from .shift_api import cashier_shifts, cashier_shift_close
 from .supervisor_review_api import supervisor_reconciliation
 from .supervisor_catalog_api import supervisor_product_create, supervisor_product_barcodes
 from .supervisor_inventory_api import supervisor_stock_operation, supervisor_inventory_report
+from .supervisor_procurement_api import suppliers, purchase_orders, purchase_order_detail, receive_purchase_order, replenishment_report
 from .session_api import pos_session, pos_login, pos_logout
 from .shift_sales_api import shift_cash_sale
 from .views import (
@@ -18,6 +19,11 @@ from .views import (
 
 
 urlpatterns = [
+    path("pos/manage/suppliers/", suppliers, name="pos-suppliers"),
+    path("pos/manage/purchase-orders/", purchase_orders, name="pos-purchase-orders"),
+    path("pos/manage/purchase-orders/<int:order_id>/", purchase_order_detail, name="pos-purchase-order-detail"),
+    path("pos/manage/purchase-orders/<int:order_id>/receive/", receive_purchase_order, name="pos-purchase-order-receive"),
+    path("pos/manage/replenishment/", replenishment_report, name="pos-replenishment-report"),
     path("pos/manage/inventory-report/", supervisor_inventory_report, name="supervisor-inventory-report"),
     path("pos/manage/stock/", supervisor_stock_operation, name="supervisor-stock-operation"),
     path("pos/manage/products/", supervisor_product_create, name="supervisor-product-create"),
