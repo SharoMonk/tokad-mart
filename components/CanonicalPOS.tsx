@@ -242,7 +242,7 @@ export default function CanonicalPOS(){
  async function reconcileCount(){
   if(countPending||stockCountExpected===null)return
   const count=Number(stockCountActual)
-  if(!/^\\d+$/.test(stockCountActual)||!Number.isSafeInteger(count)){setMessage('Enter a nonnegative whole-number physical count.');return}
+  if(!/^\d+$/.test(stockCountActual)||!Number.isSafeInteger(count)){setMessage('Enter a nonnegative whole-number physical count.');return}
   const delta=count-stockCountExpected
   if(delta===0){setMessage('Physical stock matches recorded stock. No adjustment needed.');return}
   if(Math.abs(delta)>1000000){setMessage('Count variance exceeds the adjustment limit.');return}
@@ -302,9 +302,9 @@ export default function CanonicalPOS(){
   if(procurementBusy)return
   let lines:{sku:string;quantity:number;unit_cost_minor:number}[]
   try{
-   lines=poLines.split('\\n').filter(l=>l.trim()).map(line=>{
+   lines=poLines.split('\n').filter(l=>l.trim()).map(line=>{
     const parts=line.split(',').map(x=>x.trim())
-    if(parts.length!==3||!/^\\d+$/.test(parts[1]))throw Error('Use one line per SKU: SKU, quantity, unit cost in naira')
+    if(parts.length!==3||!/^\d+$/.test(parts[1]))throw Error('Use one line per SKU: SKU, quantity, unit cost in naira')
     const quantity=Number(parts[1])
     if(!Number.isSafeInteger(quantity)||quantity<=0)throw Error('Ordered quantity must be positive.')
     return {sku:parts[0],quantity,unit_cost_minor:parseCash(parts[2])}
@@ -524,7 +524,7 @@ export default function CanonicalPOS(){
      {suppliers.map(s=><option key={s.code} value={s.code}>{s.name} ({s.code})</option>)}
     </select>
     <input aria-label="Purchase order reference" placeholder="Unique PO reference" value={poReference} onChange={e=>setPoReference(e.target.value)}/>
-    <textarea aria-label="Purchase order lines" rows={3} placeholder={'One line per item: SKU, quantity, unit cost in ₦\\nRICE-001, 20, 1500.00'} value={poLines} onChange={e=>setPoLines(e.target.value)}/>
+    <textarea aria-label="Purchase order lines" rows={3} placeholder={'One line per item: SKU, quantity, unit cost in ₦\nRICE-001, 20, 1500.00'} value={poLines} onChange={e=>setPoLines(e.target.value)}/>
     <button style={button} disabled={procurementBusy||!poSupplier||!poReference.trim()||!poLines.trim()} onClick={createPurchaseOrder}>Create purchase order</button>
    </div>
    <h3>Receive purchase order (partial deliveries supported)</h3>
