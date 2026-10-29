@@ -262,9 +262,8 @@ def receive_purchase_order(request, order_id):
 
             lines = {
                 row.pk: row for row in
-                PurchaseOrderLine.objects.select_for_update()
-                .filter(order=order, pk__in=quantities)
-                .select_related("product").order_by("product_id")
+                PurchaseOrderLine.objects.select_for_update(of=("self",))
+                .filter(order=order, pk__in=quantities).order_by("product_id")
             }
             if len(lines) != len(quantities):
                 raise ReceiptRejected("order_line_not_found", 404)
