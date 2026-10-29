@@ -63,6 +63,7 @@ def order_view(order):
     received = sum(line.quantity_received for line in lines)
     return {
         "id": order.pk, "reference": order.reference,
+        "approval": "APPROVED" if hasattr(order, "approval") else "PENDING",
         "location_code": order.location.code,
         "supplier_code": order.supplier.code,
         "supplier_name": order.supplier.name,
@@ -257,6 +258,9 @@ def receive_purchase_order(request, order_id):
                     "receipt_id": previous.pk, "replayed": True,
                     "order": order_view(order),
                 })
+            from .models import PurchaseOrderApproval
+            if not PurchaseOrderApproval.objects.filter(order=order).exists():
+                raise ReceiptRejected("purchase_order_not_approved")
             if GoodsReceipt.objects.filter(order=order, reference=reference).exists():
                 raise ReceiptRejected("receipt_reference_exists")
 
@@ -352,6 +356,7 @@ def replenishment_report(request):
     pending_by_product = {}
     for line in PurchaseOrderLine.objects.filter(
         order__location=scope.location,
+        order__approval__isnull=False,
         product_id__in=[p.pk for p in products],
         quantity_received__lt=F("quantity_ordered"),
     ).select_related("order", "order__supplier"):
