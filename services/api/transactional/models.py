@@ -283,6 +283,61 @@ class IdempotencyRecord(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 
+class Supplier(models.Model):
+    code = models.CharField(max_length=64, unique=True)
+    name = models.CharField(max_length=255)
+    contact = models.CharField(max_length=255, blank=True)
+    is_active = models.BooleanField(default=True)
+
+
+class PurchaseOrder(models.Model):
+    reference = models.CharField(max_length=64, unique=True)
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="orders")
+    location = models.ForeignKey(POSLocation, on_delete=models.PROTECT, related_name="purchase_orders")
+    created_by = models.ForeignKey(POSOperator, on_delete=models.PROTECT)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class PurchaseOrderLine(models.Model):
+    order = models.ForeignKey(PurchaseOrder, on_delete=models.PROTECT, related_name="lines")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT)
+    quantity_ordered = models.PositiveIntegerField()
+    quantity_received = models.PositiveIntegerField(default=0)
+    unit_cost_minor = models.PositiveBigIntegerField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["order", "product"], name="uniq_po_order_product")
+        ]
+
+
+class GoodsReceipt(models.Model):
+    order = models.ForeignKey(PurchaseOrder, on_delete=models.PROTECT, related_name="receipts")
+    reference = models.CharField(max_length=128)
+    key = models.CharField(max_length=128, unique=True)
+    request_fingerprint = models.CharField(max_length=64)
+    received_by = models.ForeignKey(POSOperator, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["order", "reference"], name="uniq_po_receipt_ref")
+        ]
+
+
+class GoodsReceiptLine(models.Model):
+    receipt = models.ForeignKey(GoodsReceipt, on_delete=models.PROTECT, related_name="lines")
+    order_line = models.ForeignKey(PurchaseOrderLine, on_delete=models.PROTECT)
+    quantity = models.PositiveIntegerField()
+    movement = models.OneToOneField(InventoryMovement, on_delete=models.PROTECT)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["receipt", "order_line"], name="uniq_goods_receipt_line")
+        ]
+
+
 class AuditEvent(models.Model):
     actor = models.CharField(max_length=255)
     action = models.CharField(max_length=128)
