@@ -262,6 +262,20 @@ class InventoryMovement(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 
+class StockOperation(models.Model):
+    """Idempotent supervisor stock write linked to the inventory movement."""
+    key = models.CharField(max_length=128, unique=True)
+    request_fingerprint = models.CharField(max_length=64)
+    movement = models.OneToOneField(
+        InventoryMovement, on_delete=models.PROTECT, related_name="stock_operation"
+    )
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT
+    )
+    quantity_after = models.BigIntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
 class IdempotencyRecord(models.Model):
     key = models.CharField(max_length=255, unique=True)
     request_fingerprint = models.CharField(max_length=128)
