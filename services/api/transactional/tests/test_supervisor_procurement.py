@@ -58,7 +58,7 @@ def initialize(client, approver):
     ))
     assert order.status_code == 201, order.content
     created = order.json()["order"]
-    approval = post(approver, f"/api/transactional/pos/manage/purchase-orders/{created[\'id\']}/approve/", scoped(note="Reviewed purchase order and pricing"))
+    approval = post(approver, f"/api/transactional/pos/manage/purchase-orders/{created['id']}/approve/", scoped(note="Reviewed purchase order and pricing"))
     assert approval.status_code == 201, approval.content
     return created
 
