@@ -7,6 +7,7 @@ from .supervisor_review_api import supervisor_reconciliation
 from .supervisor_catalog_api import supervisor_product_create, supervisor_product_barcodes
 from .supervisor_inventory_api import supervisor_stock_operation, supervisor_inventory_report
 from .supervisor_procurement_api import suppliers, purchase_orders, purchase_order_detail, receive_purchase_order, replenishment_report
+from .procurement_approval_api import approve_purchase_order, supplier_invoices, accounts_payable_register
 from .session_api import pos_session, pos_login, pos_logout
 from .shift_sales_api import shift_cash_sale
 from .views import (
@@ -19,6 +20,9 @@ from .views import (
 
 
 urlpatterns = [
+    path("pos/manage/purchase-orders/<int:order_id>/approve/", approve_purchase_order, name="po-approve"),
+    path("pos/manage/supplier-invoices/", supplier_invoices, name="supplier-invoices"),
+    path("pos/manage/accounts-payable/", accounts_payable_register, name="accounts-payable-register"),
     path("pos/manage/suppliers/", suppliers, name="pos-suppliers"),
     path("pos/manage/purchase-orders/", purchase_orders, name="pos-purchase-orders"),
     path("pos/manage/purchase-orders/<int:order_id>/", purchase_order_detail, name="pos-purchase-order-detail"),
