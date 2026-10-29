@@ -141,8 +141,8 @@ def test_partial_receipts_post_to_canonical_inventory_once(users):
 
 @pytest.mark.django_db
 def test_replenishment_reflects_on_order_and_received_quantities(users):
-    manager, cashier = users
-    order = initialize(manager)
+    manager, cashier, approver = users
+    order = initialize(manager, approver)
     url = "/api/transactional/pos/manage/replenishment/"
     params = scoped(threshold="5")
     assert cashier.get(url, params).status_code == 403
