@@ -44,6 +44,9 @@ def supervisor_stock_operation(request):
 
     sku, operation, quantity = data.get("sku"), data.get("operation"), data.get("quantity")
     reference, notes, key = data.get("reference"), data.get("notes"), data.get("idempotency_key")
+    expected_quantity = data.get("expected_quantity")
+    if expected_quantity is not None and (type(expected_quantity) is not int or expected_quantity < 0):
+        return _error("invalid_expected_quantity")
     if not isinstance(sku, str) or not sku or len(sku) > 64:
         return _error("invalid_sku")
     if operation not in ("RECEIVE", "ADJUST"):
@@ -62,7 +65,7 @@ def supervisor_stock_operation(request):
     canonical = {
         "sku": sku, "operation": operation, "quantity": quantity,
         "reference": reference.strip(), "notes": notes.strip(),
-        "location_code": scope.location.code,
+        "location_code": scope.location.code, "expected_quantity": expected_quantity,
     }
     fingerprint = hashlib.sha256(
         json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()
@@ -92,6 +95,11 @@ def supervisor_stock_operation(request):
                 defaults={"quantity": 0},
             )
             inventory = InventoryItem.objects.select_for_update().get(pk=inventory.pk)
+            if expected_quantity is not None and inventory.quantity != expected_quantity:
+                return JsonResponse({
+                    "error": "stock_changed_since_count",
+                    "current_quantity": inventory.quantity,
+                }, status=409)
             new_quantity = inventory.quantity + quantity
             if new_quantity < 0:
                 return _error("insufficient_stock", 409)
@@ -129,3 +137,58 @@ def supervisor_stock_operation(request):
     except IntegrityError:
         # Concurrent replay; do not partially commit stock increments.
         return _error("concurrent_stock_operation_retry", 409)
+
+
+@api_view(["GET"])
+@authentication_classes([SessionAuthentication])
+@permission_classes([IsAuthenticated, IsPOSOperator])
+def supervisor_inventory_report(request):
+    """Location-scoped stock report, including registered products with zero stock."""
+    data = request.query_params
+    try:
+        scope = authorize_pos_scope(
+            user=request.user,
+            location_code=data.get("location_code", ""),
+            terminal_code=data.get("terminal_code", ""),
+        )
+    except POSAccessError:
+        return _error("pos_access_denied", 403)
+    if scope.operator.role != POSOperator.Role.SUPERVISOR:
+        return _error("supervisor_required", 403)
+    raw_threshold = data.get("threshold", "5")
+    if not raw_threshold.isdecimal() or len(raw_threshold) > 6:
+        return _error("invalid_threshold")
+    threshold = int(raw_threshold)
+    if threshold > 100000:
+        return _error("invalid_threshold")
+    mode = data.get("mode", "all")
+    if mode not in ("all", "low"):
+        return _error("invalid_mode")
+    from django.db.models import OuterRef, Subquery, Value, BigIntegerField
+    from django.db.models.functions import Coalesce
+
+    quantities = InventoryItem.objects.filter(
+        product_id=OuterRef("pk"), location_code=scope.location.code
+    ).values("quantity")[:1]
+    products = Product.objects.filter(is_active=True, currency="NGN").annotate(
+        current_stock=Coalesce(
+            Subquery(quantities, output_field=BigIntegerField()),
+            Value(0, output_field=BigIntegerField()),
+        )
+    ).order_by("sku")
+    if mode == "low":
+        products = products.filter(current_stock__lte=threshold)
+    # Bounded response: paging can be added for a large inventory deployment.
+    rows = list(products[:200].values(
+        "id", "sku", "name", "unit_price_minor", "current_stock"
+    ))
+    return JsonResponse({
+        "location_code": scope.location.code,
+        "threshold": threshold,
+        "mode": mode,
+        "limit": 200,
+        "products": [
+            {**row, "low_stock": row["current_stock"] <= threshold}
+            for row in rows
+        ],
+    })
