@@ -36,6 +36,14 @@ export default function CanonicalPOS(){
  const [invoiceNumber,setInvoiceNumber]=useState('')
  const [invoiceAmount,setInvoiceAmount]=useState('')
  const [invoiceNotes,setInvoiceNotes]=useState('')
+ const [supplierPaymentInvoice,setSupplierPaymentInvoice]=useState('')
+ const [supplierPaymentReference,setSupplierPaymentReference]=useState('')
+ const [supplierPaymentAmount,setSupplierPaymentAmount]=useState('')
+ const [supplierPaymentNotes,setSupplierPaymentNotes]=useState('')
+ const [supplierVerificationNotes,setSupplierVerificationNotes]=useState('')
+ const [supplierPayments,setSupplierPayments]=useState<{id:number;invoice_id:number;reference:string;amount_minor:number;status:string}[]>([])
+ const [supplierReconciliation,setSupplierReconciliation]=useState<{invoice_id:number;invoice_number:string;verified_evidence_minor:number;pending_review_minor:number;remaining_unverified_minor:number;review_status:string}[]>([])
+ const paymentAttempt=useRef<{fingerprint:string;key:string}|null>(null)
  const [payables,setPayables]=useState<{number:string;supplier_code:string;amount_minor:number;expected_minor:number;status:string}[]>([])
  const [printOrder,setPrintOrder]=useState<ProcurementOrder|null>(null)
  const [poLines,setPoLines]=useState('')
@@ -291,6 +299,12 @@ export default function CanonicalPOS(){
    setReplenishment(report.products)
    const ap=await api('pos/manage/accounts-payable/?'+params)
    setPayables(ap.rows)
+   const [paymentList,reconciliation]=await Promise.all([
+    api('pos/manage/supplier-payments/?'+params),
+    api('pos/manage/supplier-reconciliation/?'+params)
+   ])
+   setSupplierPayments(paymentList.payments)
+   setSupplierReconciliation(reconciliation.rows)
   }catch(e){setMessage((e as Error).message)}
  }
  async function approveOrder(id:number){
@@ -324,6 +338,51 @@ export default function CanonicalPOS(){
    })
    setMessage('Supplier invoice '+result.status+'. Expected goods value: '+money(result.expected_minor)+'.')
    setInvoiceReceiptId('');setInvoiceNumber('');setInvoiceAmount('');setInvoiceNotes('')
+   await refreshProcurement()
+  }catch(e){setMessage((e as Error).message)}
+  finally{setProcurementBusy(false)}
+ }
+ async function recordPaymentEvidence(){
+  if(procurementBusy)return
+  const invoiceId=Number(supplierPaymentInvoice)
+  let amount:number
+  try{amount=parseCash(supplierPaymentAmount)}catch(e){setMessage((e as Error).message);return}
+  if(!Number.isSafeInteger(invoiceId)||invoiceId<1||amount<1){setMessage('Enter invoice ID and positive payment amount.');return}
+  const payload={
+   location_code:location,terminal_code:terminal,invoice_id:invoiceId,
+   reference:supplierPaymentReference.trim(),amount_minor:amount,
+   notes:supplierPaymentNotes.trim()
+  }
+  const fingerprint=JSON.stringify(payload)
+  if(paymentAttempt.current&&paymentAttempt.current.fingerprint!==fingerprint){
+   setMessage('Resolve the existing payment evidence request before changing the details.')
+   return
+  }
+  if(!paymentAttempt.current)paymentAttempt.current={fingerprint,key:crypto.randomUUID()}
+  setProcurementBusy(true)
+  try{
+   const response=await api('pos/manage/supplier-payments/',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({...payload,idempotency_key:paymentAttempt.current.key})
+   })
+   paymentAttempt.current=null
+   setMessage('Payment evidence #'+response.payment.id+' recorded. Another supervisor must verify it.')
+   setSupplierPaymentInvoice('');setSupplierPaymentReference('')
+   setSupplierPaymentAmount('');setSupplierPaymentNotes('')
+   await refreshProcurement()
+  }catch(e){setMessage((e as Error).message+' — retry unchanged values if the request may have completed.')}
+  finally{setProcurementBusy(false)}
+ }
+ async function verifyPaymentEvidence(id:number){
+  if(procurementBusy)return
+  setProcurementBusy(true)
+  try{
+   await api(`pos/manage/supplier-payments/${id}/verify/`,{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({location_code:location,terminal_code:terminal,notes:supplierVerificationNotes.trim()})
+   })
+   setSupplierVerificationNotes('')
+   setMessage('Payment evidence independently reviewed and marked manually verified.')
    await refreshProcurement()
   }catch(e){setMessage((e as Error).message)}
   finally{setProcurementBusy(false)}
@@ -615,6 +674,29 @@ export default function CanonicalPOS(){
      {printOrder.lines.map(l=><tr key={l.id}><td>{l.sku}</td><td>{l.quantity_ordered}</td><td>{money(l.unit_cost_minor)}</td></tr>)}
     </tbody></table><strong>Order total {money(printOrder.total_cost_minor)}</strong>
    </article>}
+   <h3>Record supplier payment evidence</h3>
+   <p>Enter a reference from an already completed external payment. This does not send money.</p>
+   <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+    <select aria-label="Invoice for supplier payment" value={supplierPaymentInvoice} onChange={e=>setSupplierPaymentInvoice(e.target.value)}>
+     <option value="">Select matched invoice</option>
+     {payables.filter(p=>p.status==='MATCHED').map(p=><option key={p.number} value={p.id}>{p.supplier_code} · {p.number}</option>)}
+    </select>
+    <input aria-label="Supplier bank payment reference" placeholder="External payment reference" value={supplierPaymentReference} onChange={e=>setSupplierPaymentReference(e.target.value)}/>
+    <input aria-label="Supplier payment amount" placeholder="Amount in ₦" value={supplierPaymentAmount} onChange={e=>setSupplierPaymentAmount(e.target.value)}/>
+    <input aria-label="Supplier payment evidence notes" placeholder="Evidence reviewed / source" value={supplierPaymentNotes} onChange={e=>setSupplierPaymentNotes(e.target.value)}/>
+    <button style={button} disabled={procurementBusy||!supplierPaymentInvoice||!supplierPaymentReference.trim()||!supplierPaymentAmount.trim()||!supplierPaymentNotes.trim()} onClick={recordPaymentEvidence}>Record external payment evidence</button>
+   </div>
+   <h3>Verify supplier payment evidence</h3>
+   <input aria-label="Supplier payment verification notes" placeholder="Independent external evidence review notes" value={supplierVerificationNotes} onChange={e=>setSupplierVerificationNotes(e.target.value)}/>
+   {supplierPayments.filter(p=>p.status==='RECORDED').map(p=><p key={p.id}>
+    #{p.id} · Invoice {p.invoice_id} · {p.reference} · {money(p.amount_minor)}
+    <button style={button} disabled={procurementBusy||!supplierVerificationNotes.trim()} onClick={()=>verifyPaymentEvidence(p.id)}>Manually verify (different supervisor)</button>
+   </p>)}
+   <h3>Supplier reconciliation</h3>
+   {supplierReconciliation.map(row=><p key={row.invoice_id}>
+    {row.invoice_number} · {row.review_status}: verified {money(row.verified_evidence_minor)}, pending review {money(row.pending_review_minor)}, unverified exposure {money(row.remaining_unverified_minor)}
+   </p>)}
+   <p>Verification is a supervisor review of external records, not a bank API confirmation.</p>
    <h3>Replenishment report (threshold {reportThreshold})</h3>
    <div style={{maxHeight:200,overflowY:'auto'}}>
     {replenishment.map(p=><p key={p.sku}>{p.sku}: on hand {p.current_stock}, on order {p.outstanding_order_units}, uncovered target gap {p.reorder_gap_units}</p>)}
