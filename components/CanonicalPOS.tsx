@@ -24,13 +24,20 @@ export default function CanonicalPOS(){
  const [mappingCode,setMappingCode]=useState('')
  const [catalogBusy,setCatalogBusy]=useState(false)
  type ProcurementLine={id:number;sku:string;name:string;quantity_ordered:number;quantity_received:number;quantity_outstanding:number;unit_cost_minor:number}
- type ProcurementOrder={id:number;reference:string;supplier_code:string;status:string;lines:ProcurementLine[]}
+ type ProcurementOrder={id:number;reference:string;supplier_code:string;supplier_name:string;status:string;approval:string;total_cost_minor:number;lines:ProcurementLine[]}
  const [suppliers,setSuppliers]=useState<{code:string;name:string}[]>([])
  const [supplierCode,setSupplierCode]=useState('')
  const [supplierName,setSupplierName]=useState('')
  const [supplierContact,setSupplierContact]=useState('')
  const [poSupplier,setPoSupplier]=useState('')
  const [poReference,setPoReference]=useState('')
+ const [approvalNote,setApprovalNote]=useState('')
+ const [invoiceReceiptId,setInvoiceReceiptId]=useState('')
+ const [invoiceNumber,setInvoiceNumber]=useState('')
+ const [invoiceAmount,setInvoiceAmount]=useState('')
+ const [invoiceNotes,setInvoiceNotes]=useState('')
+ const [payables,setPayables]=useState<{number:string;supplier_code:string;amount_minor:number;expected_minor:number;status:string}[]>([])
+ const [printOrder,setPrintOrder]=useState<ProcurementOrder|null>(null)
  const [poLines,setPoLines]=useState('')
  const [orders,setOrders]=useState<ProcurementOrder[]>([])
  const [receiptOrderId,setReceiptOrderId]=useState('')
@@ -282,7 +289,44 @@ export default function CanonicalPOS(){
    setSuppliers(supply.suppliers)
    setOrders(po.orders)
    setReplenishment(report.products)
+   const ap=await api('pos/manage/accounts-payable/?'+params)
+   setPayables(ap.rows)
   }catch(e){setMessage((e as Error).message)}
+ }
+ async function approveOrder(id:number){
+  if(procurementBusy)return
+  setProcurementBusy(true)
+  try{
+   await api(`pos/manage/purchase-orders/${id}/approve/`,{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({location_code:location,terminal_code:terminal,note:approvalNote.trim()})
+   })
+   setApprovalNote('')
+   setMessage('Purchase order approved. Goods can now be received.')
+   await refreshProcurement()
+  }catch(e){setMessage((e as Error).message)}
+  finally{setProcurementBusy(false)}
+ }
+ async function recordSupplierInvoice(){
+  if(procurementBusy)return
+  let amount:number
+  try{amount=parseCash(invoiceAmount)}catch(e){setMessage((e as Error).message);return}
+  const receiptId=Number(invoiceReceiptId)
+  if(!Number.isSafeInteger(receiptId)||receiptId<=0||amount<=0){setMessage('Enter valid receipt ID and invoice amount.');return}
+  setProcurementBusy(true)
+  try{
+   const result=await api('pos/manage/supplier-invoices/',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+     location_code:location,terminal_code:terminal,receipt_id:receiptId,
+     number:invoiceNumber.trim(),amount_minor:amount,notes:invoiceNotes.trim()
+    })
+   })
+   setMessage('Supplier invoice '+result.status+'. Expected goods value: '+money(result.expected_minor)+'.')
+   setInvoiceReceiptId('');setInvoiceNumber('');setInvoiceAmount('');setInvoiceNotes('')
+   await refreshProcurement()
+  }catch(e){setMessage((e as Error).message)}
+  finally{setProcurementBusy(false)}
  }
  async function registerSupplier(){
   if(procurementBusy)return
@@ -527,11 +571,16 @@ export default function CanonicalPOS(){
     <textarea aria-label="Purchase order lines" rows={3} placeholder={'One line per item: SKU, quantity, unit cost in ₦\nRICE-001, 20, 1500.00'} value={poLines} onChange={e=>setPoLines(e.target.value)}/>
     <button style={button} disabled={procurementBusy||!poSupplier||!poReference.trim()||!poLines.trim()} onClick={createPurchaseOrder}>Create purchase order</button>
    </div>
+   <h3>Approve purchase order</h3>
+   <input aria-label="Purchase order approval note" placeholder="Approval justification" value={approvalNote} onChange={e=>setApprovalNote(e.target.value)}/>
+   {orders.filter(o=>o.approval==='PENDING').map(o=><p key={o.id}>{o.reference} · {o.supplier_code}
+    <button style={button} disabled={procurementBusy||!approvalNote.trim()} onClick={()=>approveOrder(o.id)}>Approve (not own PO)</button>
+   </p>)}
    <h3>Receive purchase order (partial deliveries supported)</h3>
    <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
     <select aria-label="Goods receipt purchase order" value={receiptOrderId} onChange={e=>{setReceiptOrderId(e.target.value);setReceiptLineId('')}} disabled={procurementBusy||!!receiptAttempt.current}>
      <option value="">Select open purchase order</option>
-     {orders.filter(o=>o.status!=='RECEIVED').map(o=><option key={o.id} value={o.id}>{o.reference} · {o.status}</option>)}
+     {orders.filter(o=>o.status!=='RECEIVED'&&o.approval==='APPROVED').map(o=><option key={o.id} value={o.id}>{o.reference} · {o.status}</option>)}
     </select>
     <select aria-label="Goods receipt line" value={receiptLineId} onChange={e=>setReceiptLineId(e.target.value)} disabled={procurementBusy||!!receiptAttempt.current}>
      <option value="">Select outstanding line</option>
@@ -544,6 +593,28 @@ export default function CanonicalPOS(){
    <p>Goods receipts post inventory movements. Do not also record the same delivery through manual stock receiving.</p>
    <h3>Open purchase orders</h3>
    {orders.filter(o=>o.status!=='RECEIVED').map(o=><p key={o.id}>{o.reference} · {o.supplier_code} · {o.status}: {o.lines.map(l=>l.sku+' '+l.quantity_received+'/'+l.quantity_ordered).join(', ')}</p>)}
+   <h3>Supplier invoice matching (one invoice per goods receipt)</h3>
+   <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+    <input aria-label="Goods receipt ID for invoice" placeholder="Goods receipt ID" value={invoiceReceiptId} onChange={e=>setInvoiceReceiptId(e.target.value)}/>
+    <input aria-label="Supplier invoice number" placeholder="Supplier invoice number" value={invoiceNumber} onChange={e=>setInvoiceNumber(e.target.value)}/>
+    <input aria-label="Supplier invoice amount in naira" placeholder="Invoice amount in ₦" value={invoiceAmount} onChange={e=>setInvoiceAmount(e.target.value)}/>
+    <input aria-label="Supplier invoice notes" placeholder="Invoice review notes" value={invoiceNotes} onChange={e=>setInvoiceNotes(e.target.value)}/>
+    <button style={button} disabled={procurementBusy||!invoiceReceiptId||!invoiceNumber.trim()||!invoiceAmount.trim()||!invoiceNotes.trim()} onClick={recordSupplierInvoice}>Match supplier invoice</button>
+   </div>
+   <h3>Accounts payable — recorded invoice exposure (payments not tracked)</h3>
+   {payables.map(row=><p key={row.number}>{row.supplier_code} · {row.number}: {money(row.amount_minor)} · {row.status} (expected {money(row.expected_minor)})</p>)}
+   <h3>Purchase order print preview</h3>
+   <select aria-label="Select purchase order to print" value={printOrder?.id||''} onChange={e=>setPrintOrder(orders.find(o=>String(o.id)===e.target.value)||null)}>
+    <option value="">Choose purchase order</option>{orders.map(o=><option key={o.id} value={o.id}>{o.reference}</option>)}
+   </select>
+   <button style={button} disabled={!printOrder} onClick={()=>window.print()}>Print / Save as PDF</button>
+   {printOrder&&<article id="tokad-print-purchase-order">
+    <h2>TOKAD MART · PURCHASE ORDER</h2><p>PO: {printOrder.reference} · Supplier: {printOrder.supplier_name}</p>
+    <p>Approval: {printOrder.approval} · {printOrder.status}</p>
+    <table><thead><tr><th>SKU</th><th>Qty</th><th>Cost</th></tr></thead><tbody>
+     {printOrder.lines.map(l=><tr key={l.id}><td>{l.sku}</td><td>{l.quantity_ordered}</td><td>{money(l.unit_cost_minor)}</td></tr>)}
+    </tbody></table><strong>Order total {money(printOrder.total_cost_minor)}</strong>
+   </article>}
    <h3>Replenishment report (threshold {reportThreshold})</h3>
    <div style={{maxHeight:200,overflowY:'auto'}}>
     {replenishment.map(p=><p key={p.sku}>{p.sku}: on hand {p.current_stock}, on order {p.outstanding_order_units}, uncovered target gap {p.reorder_gap_units}</p>)}
@@ -586,9 +657,10 @@ export default function CanonicalPOS(){
    @media print {
     @page { margin: 3mm; }
     body * { visibility: hidden !important; }
-    #tokad-print-receipt, #tokad-print-receipt * { visibility: visible !important; }
+    #tokad-print-receipt, #tokad-print-receipt *, #tokad-print-purchase-order, #tokad-print-purchase-order * { visibility: visible !important; }
     #tokad-print-receipt { position: absolute; top: 0; left: 0; width: 72mm; max-width: 72mm !important; padding: 0 !important; border: 0 !important; color: #000; background: #fff; font-size: 11px; }
     #tokad-print-receipt h2 { text-align:center; font-size: 16px; }
+    #tokad-print-purchase-order { position: absolute; left:0; top:0; width: 190mm; background:white; color:black; }
     #tokad-print-receipt .tokad-no-print, #tokad-print-receipt .tokad-no-print * { display: none !important; }
    }
   `}</style>
