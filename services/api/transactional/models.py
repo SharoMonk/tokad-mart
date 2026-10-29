@@ -338,6 +338,36 @@ class GoodsReceiptLine(models.Model):
         ]
 
 
+class PurchaseOrderApproval(models.Model):
+    """Immutable second-person authorization before PO goods receipts."""
+    order = models.OneToOneField(PurchaseOrder, on_delete=models.PROTECT, related_name="approval")
+    approved_by = models.ForeignKey(POSOperator, on_delete=models.PROTECT)
+    note = models.CharField(max_length=500)
+    approved_at = models.DateTimeField(auto_now_add=True)
+
+
+class SupplierInvoice(models.Model):
+    """A reviewed supplier liability, not proof of a payment."""
+    class Status(models.TextChoices):
+        MATCHED = "MATCHED", "Matched"
+        EXCEPTION = "EXCEPTION", "Exception"
+
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="invoices")
+    receipt = models.OneToOneField(GoodsReceipt, on_delete=models.PROTECT, related_name="supplier_invoice")
+    number = models.CharField(max_length=128)
+    amount_minor = models.PositiveBigIntegerField()
+    expected_minor = models.PositiveBigIntegerField()
+    status = models.CharField(max_length=12, choices=Status.choices)
+    notes = models.CharField(max_length=1000)
+    recorded_by = models.ForeignKey(POSOperator, on_delete=models.PROTECT)
+    recorded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["supplier", "number"], name="uniq_supplier_invoice_number")
+        ]
+
+
 class AuditEvent(models.Model):
     actor = models.CharField(max_length=255)
     action = models.CharField(max_length=128)
