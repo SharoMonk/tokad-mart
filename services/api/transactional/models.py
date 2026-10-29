@@ -368,6 +368,26 @@ class SupplierInvoice(models.Model):
         ]
 
 
+class SupplierPaymentEvidence(models.Model):
+    """Manual evidence of a supplier payment; verification is not bank confirmation."""
+    class Status(models.TextChoices):
+        RECORDED = "RECORDED", "Recorded"
+        VERIFIED = "VERIFIED", "Manually verified"
+
+    invoice = models.ForeignKey(SupplierInvoice, on_delete=models.PROTECT, related_name="payment_evidence")
+    reference = models.CharField(max_length=128, unique=True)
+    idempotency_key = models.CharField(max_length=128, unique=True)
+    fingerprint = models.CharField(max_length=64)
+    amount_minor = models.PositiveBigIntegerField()
+    notes = models.CharField(max_length=1000)
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.RECORDED)
+    recorded_by = models.ForeignKey(POSOperator, on_delete=models.PROTECT, related_name="supplier_payments_recorded")
+    verified_by = models.ForeignKey(POSOperator, on_delete=models.PROTECT, null=True, blank=True, related_name="supplier_payments_verified")
+    verification_notes = models.CharField(max_length=1000, blank=True)
+    recorded_at = models.DateTimeField(auto_now_add=True)
+    verified_at = models.DateTimeField(null=True, blank=True)
+
+
 class AuditEvent(models.Model):
     actor = models.CharField(max_length=255)
     action = models.CharField(max_length=128)
