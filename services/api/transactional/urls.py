@@ -12,6 +12,7 @@ from .supplier_payment_api import supplier_payment_evidence, verify_supplier_pay
 from .financial_dashboard_api import financial_dashboard, expenses, expense_review
 from .enterprise_reporting_api import enterprise_summary, enterprise_csv
 from .report_scheduling_api import report_schedules, deactivate_schedule, download_excel
+from .store_bi_api import store_bi_insights
 from .session_api import pos_session, pos_login, pos_logout
 from .shift_sales_api import shift_cash_sale
 from .views import (
@@ -24,6 +25,7 @@ from .views import (
 
 
 urlpatterns = [
+    path("pos/manage/bi-insights/", store_bi_insights, name="store-bi-insights"),
     path("pos/manage/report-schedules/", report_schedules, name="report-schedules"),
     path("pos/manage/report-schedules/<int:schedule_id>/disable/", deactivate_schedule, name="report-schedule-disable"),
     path("pos/manage/report-xlsx/", download_excel, name="management-report-xlsx"),
