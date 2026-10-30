@@ -96,3 +96,15 @@ POS_SESSION_IDLE_SECONDS = int(os.getenv("POS_SESSION_IDLE_SECONDS", "900"))
 POS_LOGIN_REDIS_URL = os.getenv('POS_LOGIN_REDIS_URL', '')
 
 POS_LOGIN_MAX_IP_ATTEMPTS = int(os.getenv('POS_LOGIN_MAX_IP_ATTEMPTS', '50'))
+
+# Reports are strictly opt-in; recipients are approved by deployment configuration.
+TOKAD_REPORT_DELIVERY_ENABLED = os.getenv("TOKAD_REPORT_DELIVERY_ENABLED", "0") == "1"
+TOKAD_REPORT_ALLOWED_EMAILS = os.getenv("TOKAD_REPORT_ALLOWED_EMAILS", "")
+EMAIL_BACKEND = os.getenv("DJANGO_EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
+DEFAULT_FROM_EMAIL = os.getenv("DJANGO_DEFAULT_FROM_EMAIL", "")
+EMAIL_HOST = os.getenv("DJANGO_EMAIL_HOST", "localhost")
+EMAIL_PORT = int(os.getenv("DJANGO_EMAIL_PORT", "587"))
+EMAIL_USE_TLS = os.getenv("DJANGO_EMAIL_USE_TLS", "1") == "1"
+EMAIL_HOST_USER = os.getenv("DJANGO_EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("DJANGO_EMAIL_HOST_PASSWORD", "")
+EMAIL_TIMEOUT = 20
