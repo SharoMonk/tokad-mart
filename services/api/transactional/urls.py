@@ -9,6 +9,7 @@ from .supervisor_inventory_api import supervisor_stock_operation, supervisor_inv
 from .supervisor_procurement_api import suppliers, purchase_orders, purchase_order_detail, receive_purchase_order, replenishment_report
 from .procurement_approval_api import approve_purchase_order, supplier_invoices, accounts_payable_register
 from .supplier_payment_api import supplier_payment_evidence, verify_supplier_payment, supplier_payment_reconciliation
+from .financial_dashboard_api import financial_dashboard, expenses, expense_review
 from .session_api import pos_session, pos_login, pos_logout
 from .shift_sales_api import shift_cash_sale
 from .views import (
@@ -21,6 +22,9 @@ from .views import (
 
 
 urlpatterns = [
+    path("pos/manage/financial-dashboard/", financial_dashboard, name="financial-dashboard"),
+    path("pos/manage/expenses/", expenses, name="store-expenses"),
+    path("pos/manage/expenses/<int:expense_id>/review/", expense_review, name="expense-review"),
     path("pos/manage/supplier-payments/", supplier_payment_evidence, name="supplier-payment-evidence"),
     path("pos/manage/supplier-payments/<int:payment_id>/verify/", verify_supplier_payment, name="supplier-payment-verify"),
     path("pos/manage/supplier-reconciliation/", supplier_payment_reconciliation, name="supplier-payment-reconciliation"),
