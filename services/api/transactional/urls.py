@@ -11,6 +11,7 @@ from .procurement_approval_api import approve_purchase_order, supplier_invoices,
 from .supplier_payment_api import supplier_payment_evidence, verify_supplier_payment, supplier_payment_reconciliation
 from .financial_dashboard_api import financial_dashboard, expenses, expense_review
 from .enterprise_reporting_api import enterprise_summary, enterprise_csv
+from .report_scheduling_api import report_schedules, deactivate_schedule, download_excel
 from .session_api import pos_session, pos_login, pos_logout
 from .shift_sales_api import shift_cash_sale
 from .views import (
@@ -23,6 +24,9 @@ from .views import (
 
 
 urlpatterns = [
+    path("pos/manage/report-schedules/", report_schedules, name="report-schedules"),
+    path("pos/manage/report-schedules/<int:schedule_id>/disable/", deactivate_schedule, name="report-schedule-disable"),
+    path("pos/manage/report-xlsx/", download_excel, name="management-report-xlsx"),
     path("pos/manage/enterprise-summary/", enterprise_summary, name="enterprise-summary"),
     path("pos/manage/enterprise-export/", enterprise_csv, name="enterprise-export"),
     path("pos/manage/financial-dashboard/", financial_dashboard, name="financial-dashboard"),
