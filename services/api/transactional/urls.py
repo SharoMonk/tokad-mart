@@ -10,6 +10,7 @@ from .supervisor_procurement_api import suppliers, purchase_orders, purchase_ord
 from .procurement_approval_api import approve_purchase_order, supplier_invoices, accounts_payable_register
 from .supplier_payment_api import supplier_payment_evidence, verify_supplier_payment, supplier_payment_reconciliation
 from .financial_dashboard_api import financial_dashboard, expenses, expense_review
+from .enterprise_reporting_api import enterprise_summary, enterprise_csv
 from .session_api import pos_session, pos_login, pos_logout
 from .shift_sales_api import shift_cash_sale
 from .views import (
@@ -22,6 +23,8 @@ from .views import (
 
 
 urlpatterns = [
+    path("pos/manage/enterprise-summary/", enterprise_summary, name="enterprise-summary"),
+    path("pos/manage/enterprise-export/", enterprise_csv, name="enterprise-export"),
     path("pos/manage/financial-dashboard/", financial_dashboard, name="financial-dashboard"),
     path("pos/manage/expenses/", expenses, name="store-expenses"),
     path("pos/manage/expenses/<int:expense_id>/review/", expense_review, name="expense-review"),
