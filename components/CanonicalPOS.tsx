@@ -55,6 +55,11 @@ export default function CanonicalPOS(){
  const [procurementBusy,setProcurementBusy]=useState(false)
  const receiptAttempt=useRef<{fingerprint:string;key:string}|null>(null)
  const [replenishment,setReplenishment]=useState<{sku:string;current_stock:number;outstanding_order_units:number;reorder_gap_units:number}[]>([])
+ const [scheduleRecipient,setScheduleRecipient]=useState('')
+ const [scheduleFrequency,setScheduleFrequency]=useState('DAILY')
+ const [reportSchedules,setReportSchedules]=useState<{id:number;location_code:string;recipient_email:string;frequency:string;is_active:boolean}[]>([])
+ const [reportRuns,setReportRuns]=useState<{id:number;schedule_id:number;period_end:string;status:string;detail:string}[]>([])
+ const [scheduleBusy,setScheduleBusy]=useState(false)
  const [enterpriseScope,setEnterpriseScope]=useState('all')
  const [enterpriseRows,setEnterpriseRows]=useState<{
   location_code:string;name:string;completed_sales:number;gross_sales_minor:number;closed_shifts:number;cashier_variance_minor:number;approved_expenses_minor:number
@@ -550,6 +555,51 @@ export default function CanonicalPOS(){
    setMessage('CSV export requested for '+kind+'.')
   }catch(e){setMessage((e as Error).message)}
  }
+ async function loadSchedules(){
+  setScheduleBusy(true)
+  try{
+   const result=await api('pos/manage/report-schedules/?'+new URLSearchParams({location_code:location,terminal_code:terminal}))
+   setReportSchedules(result.schedules);setReportRuns(result.runs)
+  }catch(e){setMessage((e as Error).message)}
+  finally{setScheduleBusy(false)}
+ }
+ async function addSchedule(){
+  if(scheduleBusy)return
+  setScheduleBusy(true)
+  try{
+   await api('pos/manage/report-schedules/',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({location_code:location,terminal_code:terminal,frequency:scheduleFrequency,recipient_email:scheduleRecipient.trim()})
+   })
+   setScheduleRecipient('')
+   setMessage('Report schedule registered. Delivery requires administrator-enabled SMTP and a daily worker.')
+  }catch(e){setMessage((e as Error).message)}
+  finally{setScheduleBusy(false)}
+ }
+ async function stopSchedule(id:number){
+  if(scheduleBusy)return
+  setScheduleBusy(true)
+  try{
+   await api(`pos/manage/report-schedules/${id}/disable/`,{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({location_code:location,terminal_code:terminal})
+   })
+   setReportSchedules(v=>v.map(s=>s.id===id?{...s,is_active:false}:s))
+   setMessage('Report schedule disabled.')
+  }catch(e){setMessage((e as Error).message)}
+  finally{setScheduleBusy(false)}
+ }
+ async function downloadExcel(){
+  try{
+   const params=new URLSearchParams({location_code:location,terminal_code:terminal,start:financeStart,end:financeEnd})
+   const response=await fetch('/api/transactional/pos/manage/report-xlsx/?'+params,{credentials:'same-origin',cache:'no-store'})
+   if(!response.ok){const issue=await response.json();throw Error(issue.error||'Excel export failed')}
+   const blob=await response.blob(),url=URL.createObjectURL(blob)
+   const a=document.createElement('a');a.href=url;a.download='tokad-'+location+'-'+financeStart+'-'+financeEnd+'.xlsx'
+   document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url)
+   setMessage('Excel report export requested.')
+  }catch(e){setMessage((e as Error).message)}
+ }
  async function search(){
   if(!query.trim()||!location||!terminal)return
   try{
@@ -861,6 +911,26 @@ export default function CanonicalPOS(){
     </table>
    </div>
    <p>CSV can be opened in Excel. Stock export reflects current quantities, not the historic balance for the selected date range. Scheduling delivery is not yet automated.</p>
+  </section>}
+  {role==='SUPERVISOR'&&<section style={{padding:12,border:'1px solid #aaa',marginBottom:16}}>
+   <h2>Automated business reporting</h2>
+   <p>Export a formatted Excel workbook for the selected location and report dates, or register an approved email recipient for scheduled reports.</p>
+   <button style={button} onClick={downloadExcel}>Download Excel (.xlsx)</button>
+   <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+    <input aria-label="Approved report recipient email" placeholder="Administrator-approved email" type="email" value={scheduleRecipient} onChange={e=>setScheduleRecipient(e.target.value)}/>
+    <select aria-label="Scheduled report frequency" value={scheduleFrequency} onChange={e=>setScheduleFrequency(e.target.value)}>
+     <option value="DAILY">Daily</option><option value="WEEKLY">Weekly (Mondays)</option>
+    </select>
+    <button style={button} disabled={scheduleBusy||!scheduleRecipient.trim()} onClick={addSchedule}>Create report schedule</button>
+    <button style={button} disabled={scheduleBusy} onClick={loadSchedules}>Refresh schedules and history</button>
+   </div>
+   <h3>Schedules for {location}</h3>
+   {reportSchedules.map(x=><p key={x.id}>#{x.id} · {x.frequency} · {x.recipient_email} · {x.is_active?'Active':'Disabled'}
+    {x.is_active&&<button style={button} disabled={scheduleBusy} onClick={()=>stopSchedule(x.id)}>Disable my schedule</button>}
+   </p>)}
+   <h3>Recent delivery attempts</h3>
+   {reportRuns.map(x=><p key={x.id}>Schedule #{x.schedule_id} · {x.period_end} · {x.status} · {x.detail}</p>)}
+   <p>Sending requires a configured external scheduler and SMTP backend. A successful send means the email backend accepted the message, not that the recipient opened it.</p>
   </section>}
   <section style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:24}}>
    <div>
