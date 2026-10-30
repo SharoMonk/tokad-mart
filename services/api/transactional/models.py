@@ -408,6 +408,39 @@ class ExpenseReview(models.Model):
     reviewed_at = models.DateTimeField(auto_now_add=True)
 
 
+class ScheduledManagementReport(models.Model):
+    class Frequency(models.TextChoices):
+        DAILY = "DAILY", "Daily"
+        WEEKLY = "WEEKLY", "Weekly"
+
+    location = models.ForeignKey(POSLocation, on_delete=models.PROTECT)
+    created_by = models.ForeignKey(POSOperator, on_delete=models.PROTECT)
+    recipient_email = models.EmailField(max_length=254)
+    frequency = models.CharField(max_length=8, choices=Frequency.choices)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class ManagementReportRun(models.Model):
+    class Status(models.TextChoices):
+        CLAIMED = "CLAIMED", "Claimed"
+        SUCCEEDED = "SUCCEEDED", "Succeeded"
+        FAILED = "FAILED", "Failed"
+
+    schedule = models.ForeignKey(ScheduledManagementReport, on_delete=models.PROTECT, related_name="runs")
+    period_start = models.DateField()
+    period_end = models.DateField()
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.CLAIMED)
+    detail = models.CharField(max_length=500, blank=True)
+    claimed_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["schedule", "period_end"], name="uniq_management_report_period")
+        ]
+
+
 class AuditEvent(models.Model):
     actor = models.CharField(max_length=255)
     action = models.CharField(max_length=128)
