@@ -388,6 +388,26 @@ class SupplierPaymentEvidence(models.Model):
     verified_at = models.DateTimeField(null=True, blank=True)
 
 
+class StoreExpense(models.Model):
+    """Manually recorded operating expense; not a confirmed cash disbursement."""
+    location = models.ForeignKey(POSLocation, on_delete=models.PROTECT, related_name="expenses")
+    reference = models.CharField(max_length=128, unique=True)
+    category = models.CharField(max_length=64)
+    description = models.CharField(max_length=500)
+    amount_minor = models.PositiveBigIntegerField()
+    incurred_on = models.DateField()
+    recorded_by = models.ForeignKey(POSOperator, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class ExpenseReview(models.Model):
+    expense = models.OneToOneField(StoreExpense, on_delete=models.PROTECT, related_name="review")
+    reviewed_by = models.ForeignKey(POSOperator, on_delete=models.PROTECT)
+    decision = models.CharField(max_length=12, choices=[("APPROVED", "Approved"), ("REJECTED", "Rejected")])
+    notes = models.CharField(max_length=1000)
+    reviewed_at = models.DateTimeField(auto_now_add=True)
+
+
 class AuditEvent(models.Model):
     actor = models.CharField(max_length=255)
     action = models.CharField(max_length=128)
