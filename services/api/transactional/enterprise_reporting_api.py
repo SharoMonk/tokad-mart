@@ -6,8 +6,7 @@ import csv
 from datetime import date
 from io import StringIO
 
-from django.db.models import Sum, Count, OuterRef, Subquery, BigIntegerField, Value
-from django.db.models.functions import Coalesce
+from django.db.models import Sum, Count
 from django.http import HttpResponse, JsonResponse
 from rest_framework.authentication import SessionAuthentication
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
@@ -15,8 +14,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from .models import (
     CashierShift, InventoryItem, POSLocation, POSOperator, Product,
-    Sale, ShiftReconciliationReview, StoreExpense, SupplierInvoice,
-    SupplierPaymentEvidence,
+    Sale, ShiftReconciliationReview, StoreExpense,
 )
 from .permissions import IsPOSOperator
 from .supervisor_procurement_api import fail
@@ -93,6 +91,8 @@ def _totals(location, start, end):
 
 def _csv_cell(value):
     """Prevent spreadsheet formula injection on exported identifiers and labels."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
     string = str(value if value is not None else "")
     if string.lstrip().startswith(("=", "+", "-", "@", "\t", "\r", "\n")):
         return "'" + string
@@ -181,13 +181,7 @@ def enterprise_csv(request):
                 for shift in shifts
             ),
         )
-    quantities = InventoryItem.objects.filter(
-        product_id=OuterRef("pk"), location_code=OuterRef("location_code")
-    ).values("quantity")[:1]
     # Report current balances, with zero-stock rows for active products.
-    product_rows = Product.objects.filter(
-        is_active=True, currency="NGN"
-    ).order_by("sku").values("sku", "name", "unit_price_minor")
     def stock_rows():
         for location in locations:
             present = dict(InventoryItem.objects.filter(
