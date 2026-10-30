@@ -7,7 +7,7 @@ from rest_framework.authentication import SessionAuthentication
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import IsAuthenticated
 
-from .models import ManagementReportRun, ScheduledManagementReport
+from .models import AuditEvent, ManagementReportRun, ScheduledManagementReport
 from .permissions import IsPOSOperator
 from .financial_dashboard_api import _date_range
 from .supervisor_procurement_api import fail, parse_body, scope_for
@@ -73,6 +73,12 @@ def report_schedules(request):
         location=scope.location, created_by=scope.operator,
         recipient_email=email.lower(), frequency=frequency,
     )
+    AuditEvent.objects.create(
+        actor=str(request.user.pk), action="report_schedule.created",
+        entity_type="ScheduledManagementReport", entity_reference=str(schedule.pk),
+        metadata={"location_code": scope.location.code, "frequency": frequency,
+                  "recipient_email": schedule.recipient_email},
+    )
     return JsonResponse({"schedule": _serial(schedule)}, status=201)
 
 
@@ -95,6 +101,11 @@ def deactivate_schedule(request, schedule_id):
         return fail("already_inactive", 409)
     schedule.is_active = False
     schedule.save(update_fields=["is_active"])
+    AuditEvent.objects.create(
+        actor=str(request.user.pk), action="report_schedule.disabled",
+        entity_type="ScheduledManagementReport", entity_reference=str(schedule.pk),
+        metadata={"location_code": scope.location.code},
+    )
     return JsonResponse({"schedule": _serial(schedule)})
 
 
