@@ -140,6 +140,9 @@ def execute_due_reports(on=None):
     ).select_related("location", "created_by"):
         if not schedule.created_by.locations.filter(pk=schedule.location_id).exists():
             continue
+        allowlist = {e.strip().lower() for e in getattr(settings, "TOKAD_REPORT_ALLOWED_EMAILS", "").split(",") if e.strip()}
+        if schedule.recipient_email.lower() not in allowlist:
+            continue
         window = period_for(schedule, on)
         if window is None:
             continue
