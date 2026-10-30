@@ -55,6 +55,23 @@ export default function CanonicalPOS(){
  const [procurementBusy,setProcurementBusy]=useState(false)
  const receiptAttempt=useRef<{fingerprint:string;key:string}|null>(null)
  const [replenishment,setReplenishment]=useState<{sku:string;current_stock:number;outstanding_order_units:number;reorder_gap_units:number}[]>([])
+ const [financeStart,setFinanceStart]=useState(new Date().toISOString().slice(0,10))
+ const [financeEnd,setFinanceEnd]=useState(new Date().toISOString().slice(0,10))
+ const [financeReport,setFinanceReport]=useState<{
+   sales:{completed_sale_count:number;gross_minor:number;daily:{date:string;gross_minor:number}[]};
+   cashier_shifts:{shift_id:number;terminal:string;variance_minor:number|null;review_status:string}[];
+   expenses:{approved_minor:number;pending_review_minor:number};
+   supplier_invoice_exposure:{invoice_id:number;invoice_number:string;status:string;amount_minor:number;verified_evidence_minor:number;pending_review_minor:number}[];
+   disclaimer:string
+ }|null>(null)
+ const [expenseReference,setExpenseReference]=useState('')
+ const [expenseCategory,setExpenseCategory]=useState('')
+ const [expenseDescription,setExpenseDescription]=useState('')
+ const [expenseAmount,setExpenseAmount]=useState('')
+ const [expenseDate,setExpenseDate]=useState(new Date().toISOString().slice(0,10))
+ const [expenseReviewNotes,setExpenseReviewNotes]=useState('')
+ const [expenseRows,setExpenseRows]=useState<{id:number;reference:string;category:string;amount_minor:number;review_status:string}[]>([])
+ const [financeBusy,setFinanceBusy]=useState(false)
  const [stockSku,setStockSku]=useState('')
  const [stockOperation,setStockOperation]=useState('RECEIVE')
  const [stockQuantity,setStockQuantity]=useState('')
@@ -450,6 +467,52 @@ export default function CanonicalPOS(){
   }catch(e){setMessage((e as Error).message+' — if delivery was submitted, retry unchanged or verify the order before repeating.')}
   finally{setProcurementBusy(false)}
  }
+ async function loadFinance(){
+  if(financeBusy)return
+  setFinanceBusy(true)
+  try{
+   const scoped=new URLSearchParams({location_code:location,terminal_code:terminal})
+   const [dashboard,expenseReport]=await Promise.all([
+    api('pos/manage/financial-dashboard/?'+new URLSearchParams({
+     location_code:location,terminal_code:terminal,start:financeStart,end:financeEnd
+    })),
+    api('pos/manage/expenses/?'+scoped)
+   ])
+   setFinanceReport(dashboard);setExpenseRows(expenseReport.expenses)
+   setMessage('Financial controls refreshed for '+location+'.')
+  }catch(e){setMessage((e as Error).message)}
+  finally{setFinanceBusy(false)}
+ }
+ async function recordExpense(){
+  if(financeBusy)return
+  let amount:number
+  try{amount=parseCash(expenseAmount)}catch(e){setMessage((e as Error).message);return}
+  setFinanceBusy(true)
+  try{
+   await api('pos/manage/expenses/',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({location_code:location,terminal_code:terminal,
+     reference:expenseReference.trim(),category:expenseCategory.trim(),
+     description:expenseDescription.trim(),incurred_on:expenseDate,amount_minor:amount})
+   })
+   setExpenseReference('');setExpenseCategory('');setExpenseDescription('');setExpenseAmount('')
+   setMessage('Expense recorded for independent review. No payment was executed.')
+  }catch(e){setMessage((e as Error).message)}
+  finally{setFinanceBusy(false)}
+ }
+ async function reviewExpense(expenseId:number,decision:string){
+  if(financeBusy)return
+  setFinanceBusy(true)
+  try{
+   await api(`pos/manage/expenses/${expenseId}/review/`,{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({location_code:location,terminal_code:terminal,
+     decision,notes:expenseReviewNotes.trim()})
+   })
+   setExpenseReviewNotes('')
+   setMessage('Expense '+decision.toLowerCase()+'. Refresh the dashboard to see totals.')
+  }catch(e){setMessage((e as Error).message)}
+  finally{setFinanceBusy(false)}
+ }
  async function search(){
   if(!query.trim()||!location||!terminal)return
   try{
@@ -701,6 +764,42 @@ export default function CanonicalPOS(){
    <div style={{maxHeight:200,overflowY:'auto'}}>
     {replenishment.map(p=><p key={p.sku}>{p.sku}: on hand {p.current_stock}, on order {p.outstanding_order_units}, uncovered target gap {p.reorder_gap_units}</p>)}
    </div>
+  </section>}
+  {role==='SUPERVISOR'&&<section style={{padding:12,border:'1px solid #aaa',marginBottom:16}}>
+   <h2>Financial controls and management reporting</h2>
+   <p>Location-scoped operational reporting. Gross sales are not profit or reconciled bank cash.</p>
+   <label>From <input aria-label="Financial report start date" type="date" value={financeStart} onChange={e=>setFinanceStart(e.target.value)}/></label>
+   <label>To <input aria-label="Financial report end date" type="date" value={financeEnd} onChange={e=>setFinanceEnd(e.target.value)}/></label>
+   <button style={button} disabled={financeBusy} onClick={loadFinance}>Refresh financial dashboard</button>
+   {financeReport&&<div>
+    <p><strong>Completed sales</strong>: {financeReport.sales.completed_sale_count} · Gross {money(financeReport.sales.gross_minor)}</p>
+    <p><strong>Expenses</strong>: approved {money(financeReport.expenses.approved_minor)} · awaiting review {money(financeReport.expenses.pending_review_minor)}</p>
+    <h3>Daily sales</h3>
+    {financeReport.sales.daily.map(d=><p key={d.date}>{d.date}: {money(d.gross_minor)}</p>)}
+    <h3>Cashier shift variances</h3>
+    {financeReport.cashier_shifts.map(x=><p key={x.shift_id}>Shift #{x.shift_id} · {x.terminal}: {x.variance_minor===null?'Unknown':money(x.variance_minor)} · {x.review_status}</p>)}
+    <h3>Supplier invoice evidence</h3>
+    {financeReport.supplier_invoice_exposure.map(x=><p key={x.invoice_id}>
+      {x.invoice_number} · {x.status}: invoice {money(x.amount_minor)}, verified evidence {money(x.verified_evidence_minor)}, awaiting review {money(x.pending_review_minor)}
+    </p>)}
+    <p>{financeReport.disclaimer}</p>
+   </div>}
+   <h3>Record operating expense</h3>
+   <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+    <input aria-label="Expense reference" placeholder="Unique expense reference" value={expenseReference} onChange={e=>setExpenseReference(e.target.value)}/>
+    <input aria-label="Expense category" placeholder="Category" value={expenseCategory} onChange={e=>setExpenseCategory(e.target.value)}/>
+    <input aria-label="Expense description" placeholder="Description" value={expenseDescription} onChange={e=>setExpenseDescription(e.target.value)}/>
+    <input aria-label="Expense amount" placeholder="Amount in ₦" value={expenseAmount} onChange={e=>setExpenseAmount(e.target.value)}/>
+    <input aria-label="Expense date" type="date" value={expenseDate} onChange={e=>setExpenseDate(e.target.value)}/>
+    <button style={button} disabled={financeBusy||!expenseReference.trim()||!expenseCategory.trim()||!expenseDescription.trim()||!expenseAmount.trim()} onClick={recordExpense}>Record expense</button>
+   </div>
+   <h3>Independent expense review</h3>
+   <input aria-label="Expense review notes" placeholder="Review evidence and reason" value={expenseReviewNotes} onChange={e=>setExpenseReviewNotes(e.target.value)}/>
+   {expenseRows.filter(x=>x.review_status==='PENDING').map(x=><p key={x.id}>
+    #{x.id} {x.reference} · {x.category} · {money(x.amount_minor)}
+    <button style={button} disabled={financeBusy||!expenseReviewNotes.trim()} onClick={()=>reviewExpense(x.id,'APPROVED')}>Approve</button>
+    <button style={button} disabled={financeBusy||!expenseReviewNotes.trim()} onClick={()=>reviewExpense(x.id,'REJECTED')}>Reject</button>
+   </p>)}
   </section>}
   <section style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:24}}>
    <div>
