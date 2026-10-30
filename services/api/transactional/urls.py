@@ -15,6 +15,7 @@ from .report_scheduling_api import report_schedules, deactivate_schedule, downlo
 from .store_bi_api import store_bi_insights
 from .session_api import pos_session, pos_login, pos_logout
 from .shift_sales_api import shift_cash_sale
+from .readiness_api import readiness
 from .views import (
     health,
     paystack_webhook,
@@ -25,6 +26,7 @@ from .views import (
 
 
 urlpatterns = [
+    path("health/ready/", readiness, name="transactional-readiness"),
     path("pos/manage/bi-insights/", store_bi_insights, name="store-bi-insights"),
     path("pos/manage/report-schedules/", report_schedules, name="report-schedules"),
     path("pos/manage/report-schedules/<int:schedule_id>/disable/", deactivate_schedule, name="report-schedule-disable"),
