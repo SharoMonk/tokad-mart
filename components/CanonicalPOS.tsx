@@ -55,6 +55,11 @@ export default function CanonicalPOS(){
  const [procurementBusy,setProcurementBusy]=useState(false)
  const receiptAttempt=useRef<{fingerprint:string;key:string}|null>(null)
  const [replenishment,setReplenishment]=useState<{sku:string;current_stock:number;outstanding_order_units:number;reorder_gap_units:number}[]>([])
+ const [biReport,setBiReport]=useState<{
+  daily_sales:{date:string;count:number;gross_minor:number}[];
+  top_products:{sku_snapshot:string;name_snapshot:string;units:number;revenue_minor:number}[];
+  low_stock:{sku:string;name:string;stock:number}[];
+ }|null>(null)
  const [scheduleRecipient,setScheduleRecipient]=useState('')
  const [scheduleFrequency,setScheduleFrequency]=useState('DAILY')
  const [reportSchedules,setReportSchedules]=useState<{id:number;location_code:string;recipient_email:string;frequency:string;is_active:boolean}[]>([])
@@ -555,6 +560,16 @@ export default function CanonicalPOS(){
    setMessage('CSV export requested for '+kind+'.')
   }catch(e){setMessage((e as Error).message)}
  }
+ async function refreshBi(){
+  try{
+   const data=await api('pos/manage/bi-insights/?'+new URLSearchParams({
+    location_code:location,terminal_code:terminal,
+    start:financeStart,end:financeEnd,threshold:reportThreshold
+   }))
+   setBiReport(data)
+   setMessage('Sales trends and low-stock indicators updated for '+location+'.')
+  }catch(e){setMessage((e as Error).message)}
+ }
  async function loadSchedules(){
   setScheduleBusy(true)
   try{
@@ -931,6 +946,20 @@ export default function CanonicalPOS(){
    <h3>Recent delivery attempts</h3>
    {reportRuns.map(x=><p key={x.id}>Schedule #{x.schedule_id} · {x.period_end} · {x.status} · {x.detail}</p>)}
    <p>Sending requires a configured external scheduler and SMTP backend. A successful send means the email backend accepted the message, not that the recipient opened it.</p>
+  </section>}
+  {role==='SUPERVISOR'&&<section style={{padding:12,border:'1px solid #aaa',marginBottom:16}}>
+   <h2>Business intelligence and inventory insights</h2>
+   <p>Uses the financial date range and low-stock threshold selected above.</p>
+   <button style={button} onClick={refreshBi}>Refresh BI insights</button>
+   {biReport&&<div>
+    <h3>Daily sales trend</h3>
+    {biReport.daily_sales.map(d=><p key={d.date}>{d.date} · {d.count} sales · {money(d.gross_minor)}</p>)}
+    <h3>Top selling products</h3>
+    {biReport.top_products.map((p,i)=><p key={i}>{p.name_snapshot} ({p.sku_snapshot}) · {p.units} units · {money(p.revenue_minor)}</p>)}
+    <h3>Low-stock watchlist</h3>
+    {biReport.low_stock.map(p=><p key={p.sku}>{p.name} ({p.sku}) · {p.stock} units</p>)}
+    <p>Revenue figures are recorded sale totals, not margin or profit. Stock reflects current balances.</p>
+   </div>}
   </section>}
   <section style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:24}}>
    <div>
