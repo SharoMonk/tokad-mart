@@ -1,0 +1,16 @@
+FROM node:22-bookworm-slim AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm install --no-audit --no-fund
+COPY . .
+ARG TRANSACTIONAL_API_ORIGIN=http://api:8000
+ENV TRANSACTIONAL_API_ORIGIN=$TRANSACTIONAL_API_ORIGIN
+RUN npm run build
+
+FROM node:22-bookworm-slim
+WORKDIR /app
+ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0 TRANSACTIONAL_API_ORIGIN=http://api:8000
+COPY --from=builder --chown=node:node /app ./
+USER node
+EXPOSE 3000
+CMD ["npm", "run", "start"]
