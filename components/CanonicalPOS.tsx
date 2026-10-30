@@ -55,6 +55,12 @@ export default function CanonicalPOS(){
  const [procurementBusy,setProcurementBusy]=useState(false)
  const receiptAttempt=useRef<{fingerprint:string;key:string}|null>(null)
  const [replenishment,setReplenishment]=useState<{sku:string;current_stock:number;outstanding_order_units:number;reorder_gap_units:number}[]>([])
+ const [enterpriseScope,setEnterpriseScope]=useState('all')
+ const [enterpriseRows,setEnterpriseRows]=useState<{
+  location_code:string;name:string;completed_sales:number;gross_sales_minor:number;closed_shifts:number;cashier_variance_minor:number;approved_expenses_minor:number
+ }[]>([])
+ const [enterpriseTotals,setEnterpriseTotals]=useState<{completed_sales:number;gross_sales_minor:number;cashier_variance_minor:number;approved_expenses_minor:number}|null>(null)
+ const [enterpriseBusy,setEnterpriseBusy]=useState(false)
  const [financeStart,setFinanceStart]=useState(new Date().toISOString().slice(0,10))
  const [financeEnd,setFinanceEnd]=useState(new Date().toISOString().slice(0,10))
  const [financeReport,setFinanceReport]=useState<{
@@ -513,6 +519,37 @@ export default function CanonicalPOS(){
   }catch(e){setMessage((e as Error).message)}
   finally{setFinanceBusy(false)}
  }
+ async function loadEnterprise(){
+  if(enterpriseBusy)return
+  setEnterpriseBusy(true)
+  try{
+   const params=new URLSearchParams({start:financeStart,end:financeEnd})
+   if(enterpriseScope!=='all')params.set('location_code',enterpriseScope)
+   const result=await api('pos/manage/enterprise-summary/?'+params)
+   setEnterpriseRows(result.locations);setEnterpriseTotals(result.totals)
+   setMessage('Enterprise report refreshed for assigned locations.')
+  }catch(e){setMessage((e as Error).message)}
+  finally{setEnterpriseBusy(false)}
+ }
+ async function downloadEnterprise(kind:'daily'|'stock'|'closing'){
+  const params=new URLSearchParams({
+   start:financeStart,end:financeEnd,report_type:kind
+  })
+  if(enterpriseScope!=='all')params.set('location_code',enterpriseScope)
+  try{
+   const response=await fetch('/api/transactional/pos/manage/enterprise-export/?'+params.toString(),{
+    credentials:'same-origin',cache:'no-store'
+   })
+   if(!response.ok){const issue=await response.json();throw Error(issue.error||'Export failed')}
+   const blob=await response.blob()
+   const url=URL.createObjectURL(blob)
+   const link=document.createElement('a')
+   link.href=url;link.download='tokad-'+kind+'-'+financeStart+'-'+financeEnd+'.csv'
+   document.body.appendChild(link);link.click();link.remove()
+   URL.revokeObjectURL(url)
+   setMessage('CSV export requested for '+kind+'.')
+  }catch(e){setMessage((e as Error).message)}
+ }
  async function search(){
   if(!query.trim()||!location||!terminal)return
   try{
@@ -800,6 +837,30 @@ export default function CanonicalPOS(){
     <button style={button} disabled={financeBusy||!expenseReviewNotes.trim()} onClick={()=>reviewExpense(x.id,'APPROVED')}>Approve</button>
     <button style={button} disabled={financeBusy||!expenseReviewNotes.trim()} onClick={()=>reviewExpense(x.id,'REJECTED')}>Reject</button>
    </p>)}
+  </section>}
+  {role==='SUPERVISOR'&&<section style={{padding:12,border:'1px solid #aaa',marginBottom:16}}>
+   <h2>Enterprise reporting and store performance</h2>
+   <p>Reports use the financial dashboard dates above. Only your assigned active locations are included.</p>
+   <select aria-label="Enterprise report location" value={enterpriseScope} onChange={e=>setEnterpriseScope(e.target.value)}>
+    <option value="all">All assigned locations</option>
+    {locations.map(l=><option key={l.code} value={l.code}>{l.name}</option>)}
+   </select>
+   <button style={button} disabled={enterpriseBusy} onClick={loadEnterprise}>Refresh enterprise report</button>
+   <button style={button} onClick={()=>downloadEnterprise('daily')}>Export daily CSV</button>
+   <button style={button} onClick={()=>downloadEnterprise('closing')}>Export closing CSV</button>
+   <button style={button} onClick={()=>downloadEnterprise('stock')}>Export stock CSV</button>
+   {enterpriseTotals&&<p>All authorized selected stores: {enterpriseTotals.completed_sales} completed sales · gross {money(enterpriseTotals.gross_sales_minor)} · cashier variance {money(enterpriseTotals.cashier_variance_minor)} · approved expenses {money(enterpriseTotals.approved_expenses_minor)}</p>}
+   <div style={{overflowX:'auto'}}>
+    <table style={{width:'100%',textAlign:'left'}}>
+     <thead><tr><th>Location</th><th>Sales</th><th>Gross</th><th>Shifts</th><th>Variance</th><th>Approved expenses</th></tr></thead>
+     <tbody>{enterpriseRows.map(r=><tr key={r.location_code}>
+      <td>{r.name} ({r.location_code})</td><td>{r.completed_sales}</td>
+      <td>{money(r.gross_sales_minor)}</td><td>{r.closed_shifts}</td>
+      <td>{money(r.cashier_variance_minor)}</td><td>{money(r.approved_expenses_minor)}</td>
+     </tr>)}</tbody>
+    </table>
+   </div>
+   <p>CSV can be opened in Excel. Stock export reflects current quantities, not the historic balance for the selected date range. Scheduling delivery is not yet automated.</p>
   </section>}
   <section style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:24}}>
    <div>
